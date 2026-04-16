@@ -7,8 +7,10 @@ import {
   toDateString,
   getWorkoutRecord,
   saveWorkoutRecord,
+  exportAllDataForNotion,
   type WorkoutRecord,
 } from "@/lib/storage";
+import { getNotionConfig, normalizePageId } from "@/lib/notion";
 
 export default function WorkoutPage() {
   const today = toDateString();
@@ -18,6 +20,8 @@ export default function WorkoutPage() {
   const [note, setNote] = useState("");
   const [saved, setSaved] = useState(false);
   const [alreadyDone, setAlreadyDone] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
 
   useEffect(() => {
     const record = getWorkoutRecord(today);
@@ -44,6 +48,42 @@ export default function WorkoutPage() {
   const completedCount = Object.values(checked).filter(Boolean).length;
   const total = todayWorkout.exercises.length;
   const allDone = completedCount === total;
+
+  const handleNotionSync = async () => {
+    const cfg = getNotionConfig();
+    if (!cfg?.token || !cfg?.dataSyncPageId) {
+      setSyncResult("⚙️ 設定ページでNotionを設定してください");
+      setTimeout(() => setSyncResult(null), 3000);
+      return;
+    }
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const { workouts, meals, weights } = exportAllDataForNotion();
+      const res = await fetch("/api/notion/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token: cfg.token,
+          pageId: normalizePageId(cfg.dataSyncPageId),
+          workouts,
+          meals,
+          weights,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSyncResult(`✅ 同期完了！(${data.updatedAt})`);
+      } else {
+        setSyncResult(`❌ ${data.error}`);
+      }
+    } catch {
+      setSyncResult("❌ 同期に失敗しました");
+    } finally {
+      setSyncing(false);
+      setTimeout(() => setSyncResult(null), 4000);
+    }
+  };
 
   const handleSave = () => {
     const record: WorkoutRecord = {
@@ -162,6 +202,18 @@ export default function WorkoutPage() {
       >
         {saved ? "✅ 保存しました！" : "💪 記録を保存する"}
       </button>
+
+      {/* Notion同期ボタン */}
+      <button
+        onClick={handleNotionSync}
+        disabled={syncing}
+        className="w-full py-3 rounded-2xl font-bold text-sm border-2 border-[#5C3D11]/30 text-[#5C3D11] hover:border-[#5C3D11] hover:bg-[#5C3D11]/5 transition-all disabled:opacity-50"
+      >
+        {syncing ? "⏳ Notionに同期中..." : "☁️ Notionにデータを同期する"}
+      </button>
+      {syncResult && (
+        <p className="text-center text-xs text-[#5C3D11]/80 -mt-2">{syncResult}</p>
+      )}
     </div>
   );
 }

@@ -10,6 +10,7 @@ import {
   getLatestWeight,
   type WeightRecord,
 } from "@/lib/storage";
+import { getNotionConfig, normalizePageId } from "@/lib/notion";
 
 export default function Home() {
   const today = toDateString();
@@ -18,6 +19,8 @@ export default function Home() {
   const [workoutDone, setWorkoutDone] = useState(false);
   const [mealDone, setMealDone] = useState(false);
   const [latestWeight, setLatestWeight] = useState<WeightRecord | null>(null);
+  const [advicePreview, setAdvicePreview] = useState<string | null>(null);
+  const [notionConfigured, setNotionConfigured] = useState(false);
 
   useEffect(() => {
     const wr = getWorkoutRecord(today);
@@ -25,6 +28,22 @@ export default function Home() {
     const mr = getMealRecord(today);
     setMealDone(!!(mr?.breakfast?.content || mr?.lunch?.content || mr?.dinner?.content));
     setLatestWeight(getLatestWeight());
+
+    // アドバイスプレビューを取得
+    const cfg = getNotionConfig();
+    if (cfg?.token && cfg?.advicePageId) {
+      setNotionConfigured(true);
+      fetch(`/api/notion/advice?token=${encodeURIComponent(cfg.token)}&pageId=${encodeURIComponent(normalizePageId(cfg.advicePageId))}`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.success && data.content) {
+            // 最初の2〜3行だけ表示
+            const lines = data.content.split("\n").filter((l: string) => l.trim()).slice(0, 3);
+            setAdvicePreview(lines.join(" / "));
+          }
+        })
+        .catch(() => {});
+    }
   }, [today]);
 
   const dayNames = ["日", "月", "火", "水", "木", "金", "土"];
@@ -125,6 +144,31 @@ export default function Home() {
           ) : (
             <p className="text-xs mt-1 text-[#5C3D11]/60">未記録</p>
           )}
+        </Link>
+      </section>
+
+      {/* トレーナーからのアドバイスプレビュー */}
+      <section>
+        <Link href="/advice" className="block rounded-2xl border-2 border-[#D4A017]/40 bg-white hover:border-[#D4A017] p-4 transition-all group">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">🤖</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-bold text-[#5C3D11] mb-1">トレーナーからのアドバイス</p>
+              {notionConfigured ? (
+                advicePreview ? (
+                  <p className="text-xs text-[#2C1A0E]/70 truncate">{advicePreview}</p>
+                ) : (
+                  <p className="text-xs text-[#5C3D11]/50">読み込み中...</p>
+                )
+              ) : (
+                <p className="text-xs text-[#5C3D11]/50">⚙️ Notion連携を設定してください</p>
+              )}
+            </div>
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none"
+              className="text-[#D4A017]/40 group-hover:text-[#D4A017] flex-shrink-0 transition-colors">
+              <path d="M4 10h12M12 6l4 4-4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
         </Link>
       </section>
 

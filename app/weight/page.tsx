@@ -7,8 +7,10 @@ import {
   getWeekDates,
   getWeightRecords,
   saveWeightRecord,
+  exportAllDataForNotion,
   type WeightRecord,
 } from "@/lib/storage";
+import { getNotionConfig, normalizePageId } from "@/lib/notion";
 
 export default function WeightPage() {
   const today = toDateString();
@@ -17,6 +19,8 @@ export default function WeightPage() {
   const [bodyFat, setBodyFat] = useState("");
   const [saved, setSaved] = useState(false);
   const [records, setRecords] = useState<WeightRecord[]>([]);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
   const weekDates = getWeekDates();
 
   const loadRecords = () => {
@@ -31,6 +35,36 @@ export default function WeightPage() {
       setBodyFat(existing.bodyFat !== null ? String(existing.bodyFat) : "");
     }
   }, [today]);
+
+  const handleNotionSync = async () => {
+    const cfg = getNotionConfig();
+    if (!cfg?.token || !cfg?.dataSyncPageId) {
+      setSyncResult("⚙️ 設定ページでNotionを設定してください");
+      setTimeout(() => setSyncResult(null), 3000);
+      return;
+    }
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const { workouts, meals, weights } = exportAllDataForNotion();
+      const res = await fetch("/api/notion/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token: cfg.token,
+          pageId: normalizePageId(cfg.dataSyncPageId),
+          workouts, meals, weights,
+        }),
+      });
+      const data = await res.json();
+      setSyncResult(data.success ? `✅ 同期完了！(${data.updatedAt})` : `❌ ${data.error}`);
+    } catch {
+      setSyncResult("❌ 同期に失敗しました");
+    } finally {
+      setSyncing(false);
+      setTimeout(() => setSyncResult(null), 4000);
+    }
+  };
 
   const handleSave = () => {
     const w = parseFloat(weight);
@@ -207,6 +241,18 @@ export default function WeightPage() {
             ))}
           </div>
         </section>
+      )}
+
+      {/* Notion同期ボタン */}
+      <button
+        onClick={handleNotionSync}
+        disabled={syncing}
+        className="w-full py-3 rounded-2xl font-bold text-sm border-2 border-[#5C3D11]/30 text-[#5C3D11] hover:border-[#5C3D11] hover:bg-[#5C3D11]/5 transition-all disabled:opacity-50"
+      >
+        {syncing ? "⏳ Notionに同期中..." : "☁️ Notionにデータを同期する"}
+      </button>
+      {syncResult && (
+        <p className="text-center text-xs text-[#5C3D11]/80 -mt-2">{syncResult}</p>
       )}
     </div>
   );

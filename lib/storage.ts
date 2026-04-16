@@ -93,6 +93,35 @@ export function getLatestWeight(): WeightRecord | null {
   return records.length > 0 ? records[records.length - 1] : null;
 }
 
+// ===== Notion同期用データエクスポート =====
+export function exportAllDataForNotion(): {
+  workouts: WorkoutRecord[];
+  meals: MealRecord[];
+  weights: WeightRecord[];
+} {
+  if (typeof window === "undefined") return { workouts: [], meals: [], weights: [] };
+
+  // 直近7日の筋トレ・食事
+  const workouts: WorkoutRecord[] = [];
+  const meals: MealRecord[] = [];
+  const weekDates = getWeekDates();
+  for (const date of weekDates) {
+    const w = getWorkoutRecord(date);
+    if (w) workouts.push(w);
+    const m = getMealRecord(date);
+    if (m) meals.push(m);
+  }
+
+  // 直近30日の体重
+  const allWeights = getWeightRecords();
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 30);
+  const cutoffStr = toDateString(cutoff);
+  const weights = allWeights.filter((w) => w.date >= cutoffStr);
+
+  return { workouts, meals, weights };
+}
+
 // ===== リマインド通知 =====
 export async function requestNotificationPermission(): Promise<boolean> {
   if (typeof window === "undefined" || !("Notification" in window)) return false;

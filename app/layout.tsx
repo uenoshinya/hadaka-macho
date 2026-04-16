@@ -31,21 +31,33 @@ export default function RootLayout({
             <nav className="flex items-center gap-1">
               <Link
                 href="/workout"
-                className="px-3 py-1.5 text-xs font-semibold text-[#FFF8EC] hover:text-[#D4A017] hover:bg-[#3d2410] rounded-lg transition-colors"
+                className="px-2.5 py-1.5 text-xs font-semibold text-[#FFF8EC] hover:text-[#D4A017] hover:bg-[#3d2410] rounded-lg transition-colors"
               >
-                💪 筋トレ
+                💪
               </Link>
               <Link
                 href="/meals"
-                className="px-3 py-1.5 text-xs font-semibold text-[#FFF8EC] hover:text-[#D4A017] hover:bg-[#3d2410] rounded-lg transition-colors"
+                className="px-2.5 py-1.5 text-xs font-semibold text-[#FFF8EC] hover:text-[#D4A017] hover:bg-[#3d2410] rounded-lg transition-colors"
               >
-                🍽️ 食事
+                🍽️
               </Link>
               <Link
                 href="/weight"
-                className="px-3 py-1.5 text-xs font-semibold text-[#FFF8EC] hover:text-[#D4A017] hover:bg-[#3d2410] rounded-lg transition-colors"
+                className="px-2.5 py-1.5 text-xs font-semibold text-[#FFF8EC] hover:text-[#D4A017] hover:bg-[#3d2410] rounded-lg transition-colors"
               >
-                ⚖️ 体重
+                ⚖️
+              </Link>
+              <Link
+                href="/advice"
+                className="px-2.5 py-1.5 text-xs font-semibold text-[#FFF8EC] hover:text-[#D4A017] hover:bg-[#3d2410] rounded-lg transition-colors"
+              >
+                🤖
+              </Link>
+              <Link
+                href="/settings"
+                className="px-2.5 py-1.5 text-xs font-semibold text-[#FFF8EC] hover:text-[#D4A017] hover:bg-[#3d2410] rounded-lg transition-colors"
+              >
+                ⚙️
               </Link>
             </nav>
           </div>
