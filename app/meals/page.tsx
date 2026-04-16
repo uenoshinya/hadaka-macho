@@ -56,7 +56,7 @@ async function estimateCaloriesWithGemini(
   parts.push({ text: textPrompt });
 
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -160,7 +160,8 @@ export default function MealsPage() {
       setAiResult((prev) => ({ ...prev, [key]: result.description }));
       updateMeal(key, { calories: result.calories, isEstimating: false });
     } catch (err) {
-      alert("AI推定エラー: " + (err instanceof Error ? err.message : String(err)));
+      const msg = err instanceof Error ? err.message : String(err);
+      setAiResult((prev) => ({ ...prev, [key]: `❌ エラー: ${msg}` }));
       updateMeal(key, { isEstimating: false });
     }
   };
