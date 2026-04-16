@@ -3,7 +3,8 @@
 export interface WorkoutRecord {
   date: string; // YYYY-MM-DD
   completed: boolean;
-  completedExercises: string[];
+  completedExercises: string[]; // 全セット完了した種目名
+  exerciseSets: Record<string, boolean[]>; // 種目名 → セットごとの達成フラグ
   note: string;
 }
 
