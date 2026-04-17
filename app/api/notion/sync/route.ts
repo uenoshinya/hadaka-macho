@@ -26,17 +26,19 @@ async function clearPageBlocks(pageId: string, token: string): Promise<void> {
     const data = await res.json();
     const blocks: Array<{ id: string }> = data.results ?? [];
 
-    // 順番に削除（並列だとレート制限に当たる場合があるため直列処理）
-    for (const block of blocks) {
-      await fetch(`${NOTION_API}/blocks/${block.id}`, {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Notion-Version": NOTION_VERSION,
-        },
-        cache: "no-store",
-      });
-    }
+    // 並列削除（速度優先）
+    await Promise.all(
+      blocks.map((block) =>
+        fetch(`${NOTION_API}/blocks/${block.id}`, {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Notion-Version": NOTION_VERSION,
+          },
+          cache: "no-store",
+        })
+      )
+    );
 
     if (!data.has_more) break;
     cursor = data.next_cursor;
@@ -61,7 +63,12 @@ async function appendBlocks(pageId: string, token: string, blocks: unknown[]): P
     });
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(`Notionへの書き込みに失敗: ${err.message ?? res.status}`);
+      const code = err.code ?? "";
+      const msg = err.message ?? res.status;
+      // 401: トークン無効 / 403: アクセス権なし / 400: リクエスト不正
+      if (res.status === 401) throw new Error(`Notionトークンが無効です（401）。設定ページでトークンを確認してください。`);
+      if (res.status === 403) throw new Error(`Notionページへのアクセスがありません（403）。IntegrationをページにConnectしているか確認してください。`);
+      throw new Error(`Notionへの書き込みに失敗 [${res.status}${code ? "/" + code : ""}]: ${msg}`);
     }
   }
 }
