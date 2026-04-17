@@ -12,7 +12,7 @@ async function clearPageBlocks(pageId: string, token: string): Promise<void> {
   let cursor: string | undefined = undefined;
   // ページネーション対応：100件を超えるブロックも全削除
   while (true) {
-    const url = cursor
+    const url: string = cursor
       ? `${NOTION_API}/blocks/${pageId}/children?page_size=100&start_cursor=${cursor}`
       : `${NOTION_API}/blocks/${pageId}/children?page_size=100`;
     const res = await fetch(url, {
