@@ -18,6 +18,7 @@ export default function WeightPage() {
   const [weight, setWeight] = useState("");
   const [bodyFat, setBodyFat] = useState("");
   const [saved, setSaved] = useState(false);
+  const [savedTime, setSavedTime] = useState<string | null>(null);
   const [records, setRecords] = useState<WeightRecord[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string | null>(null);
@@ -33,6 +34,7 @@ export default function WeightPage() {
     if (existing) {
       setWeight(String(existing.weight));
       setBodyFat(existing.bodyFat !== null ? String(existing.bodyFat) : "");
+      setSavedTime("（記録済み）");
     }
   }, [today]);
 
@@ -76,8 +78,11 @@ export default function WeightPage() {
     };
     saveWeightRecord(record);
     loadRecords();
+    const now = new Date();
+    const timeStr = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    setSavedTime(`${timeStr} 更新`);
     setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setTimeout(() => setSaved(false), 2500);
   };
 
   // 直近レコード（7件）
@@ -119,7 +124,12 @@ export default function WeightPage() {
 
       {/* 今日の入力 */}
       <section className="bg-white rounded-2xl border-2 border-[#D4A017]/30 p-5">
-        <h2 className="text-sm font-bold text-[#5C3D11] mb-4">📅 今日の記録（{today}）</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-bold text-[#5C3D11]">📅 今日の記録（{today}）</h2>
+          {savedTime && (
+            <span className="text-xs text-[#5C3D11]/50">{savedTime}</span>
+          )}
+        </div>
 
         <div className="flex gap-4 mb-4">
           {/* 体重 */}
@@ -160,7 +170,7 @@ export default function WeightPage() {
               : "bg-[#D4A017] hover:bg-[#c4920f] text-[#2C1A0E] shadow-[0_4px_16px_rgba(212,160,23,0.35)]"
           }`}
         >
-          {saved ? "✅ 保存しました！" : "⚖️ 記録する"}
+          {saved ? "✅ 更新しました！" : savedTime ? "⚖️ 再記録する（上書き）" : "⚖️ 記録する"}
         </button>
       </section>
 

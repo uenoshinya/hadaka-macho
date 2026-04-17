@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractTextFromBlocks } from "@/lib/notion";
 
+// キャッシュを完全無効化（トレーナーの更新を即時反映するため）
+export const dynamic = "force-dynamic";
+
 const NOTION_API = "https://api.notion.com/v1";
 const NOTION_VERSION = "2022-06-28";
 
@@ -16,12 +19,13 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "token と pageId は必須です" }, { status: 400 });
     }
 
-    // ページのブロックを取得
+    // ページのブロックを取得（cache: 'no-store' でキャッシュ無効化）
     const res = await fetch(`${NOTION_API}/blocks/${pageId}/children?page_size=100`, {
       headers: {
         Authorization: `Bearer ${token}`,
         "Notion-Version": NOTION_VERSION,
       },
+      cache: "no-store",
     });
 
     if (!res.ok) {
@@ -38,6 +42,7 @@ export async function GET(req: NextRequest) {
         Authorization: `Bearer ${token}`,
         "Notion-Version": NOTION_VERSION,
       },
+      cache: "no-store",
     });
     const pageData = pageRes.ok ? await pageRes.json() : null;
     const lastEdited = pageData?.last_edited_time ?? null;
