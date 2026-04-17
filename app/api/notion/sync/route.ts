@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { heading2Block, heading3Block, paragraphBlock, bulletBlock, dividerBlock } from "@/lib/notion";
 
+// キャッシュ無効化（同期のたびに最新データを書き込むため）
+export const dynamic = "force-dynamic";
+
 const NOTION_API = "https://api.notion.com/v1";
 const NOTION_VERSION = "2022-06-28";
 
@@ -11,6 +14,7 @@ async function clearPageBlocks(pageId: string, token: string): Promise<void> {
       Authorization: `Bearer ${token}`,
       "Notion-Version": NOTION_VERSION,
     },
+    cache: "no-store", // キャッシュ無効化：毎回最新のブロック一覧を取得
   });
   if (!res.ok) return;
   const data = await res.json();
@@ -24,22 +28,33 @@ async function clearPageBlocks(pageId: string, token: string): Promise<void> {
           Authorization: `Bearer ${token}`,
           "Notion-Version": NOTION_VERSION,
         },
+        cache: "no-store",
       })
     )
   );
 }
 
-// ===== ページにブロックを追加 =====
+// ===== ページにブロックを追加（100件ずつ分割して送信）=====
 async function appendBlocks(pageId: string, token: string, blocks: unknown[]): Promise<void> {
-  await fetch(`${NOTION_API}/blocks/${pageId}/children`, {
-    method: "PATCH",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Notion-Version": NOTION_VERSION,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ children: blocks }),
-  });
+  // Notion APIは1リクエスト最大100ブロックの制限あり
+  const CHUNK_SIZE = 100;
+  for (let i = 0; i < blocks.length; i += CHUNK_SIZE) {
+    const chunk = blocks.slice(i, i + CHUNK_SIZE);
+    const res = await fetch(`${NOTION_API}/blocks/${pageId}/children`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Notion-Version": NOTION_VERSION,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ children: chunk }),
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(`Notionへの書き込みに失敗: ${err.message ?? res.status}`);
+    }
+  }
 }
 
 // ===== POST /api/notion/sync =====
