@@ -28,16 +28,17 @@ export interface WeightRecord {
   bodyFat: number | null;
 }
 
-// ===== 日付ユーティリティ =====
+// ===== 日付ユーティリティ（JST基準） =====
+// UTC+9（日本標準時）で日付文字列を返す。0時ちょうどに新しい日付に切り替わる。
 export function toDateString(date: Date = new Date()): string {
-  return date.toISOString().split("T")[0];
+  const jst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+  return jst.toISOString().split("T")[0];
 }
 
 export function getWeekDates(): string[] {
-  const today = new Date();
+  const now = new Date();
   return Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(today);
-    d.setDate(today.getDate() - i);
+    const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
     return toDateString(d);
   }).reverse();
 }

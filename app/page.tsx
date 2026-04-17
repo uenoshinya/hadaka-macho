@@ -47,8 +47,9 @@ export default function Home() {
   }, [today]);
 
   const dayNames = ["日", "月", "火", "水", "木", "金", "土"];
-  const now = new Date();
-  const dateLabel = `${now.getMonth() + 1}/${now.getDate()}（${dayNames[now.getDay()]}）`;
+  // JST（UTC+9）で日付・曜日を計算
+  const nowJst = new Date(new Date().getTime() + 9 * 60 * 60 * 1000);
+  const dateLabel = `${nowJst.getUTCMonth() + 1}/${nowJst.getUTCDate()}（${dayNames[nowJst.getUTCDay()]}）`;
 
   return (
     <div className="flex flex-col gap-6">

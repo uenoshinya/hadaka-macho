@@ -9,29 +9,38 @@ const NOTION_VERSION = "2022-06-28";
 
 // ===== ページの既存ブロックをすべて削除 =====
 async function clearPageBlocks(pageId: string, token: string): Promise<void> {
-  const res = await fetch(`${NOTION_API}/blocks/${pageId}/children?page_size=100`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Notion-Version": NOTION_VERSION,
-    },
-    cache: "no-store", // キャッシュ無効化：毎回最新のブロック一覧を取得
-  });
-  if (!res.ok) return;
-  const data = await res.json();
-  const blocks: Array<{ id: string }> = data.results ?? [];
+  let cursor: string | undefined = undefined;
+  // ページネーション対応：100件を超えるブロックも全削除
+  while (true) {
+    const url = cursor
+      ? `${NOTION_API}/blocks/${pageId}/children?page_size=100&start_cursor=${cursor}`
+      : `${NOTION_API}/blocks/${pageId}/children?page_size=100`;
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Notion-Version": NOTION_VERSION,
+      },
+      cache: "no-store",
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const blocks: Array<{ id: string }> = data.results ?? [];
 
-  await Promise.all(
-    blocks.map((block) =>
-      fetch(`${NOTION_API}/blocks/${block.id}`, {
+    // 順番に削除（並列だとレート制限に当たる場合があるため直列処理）
+    for (const block of blocks) {
+      await fetch(`${NOTION_API}/blocks/${block.id}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${token}`,
           "Notion-Version": NOTION_VERSION,
         },
         cache: "no-store",
-      })
-    )
-  );
+      });
+    }
+
+    if (!data.has_more) break;
+    cursor = data.next_cursor;
+  }
 }
 
 // ===== ページにブロックを追加（100件ずつ分割して送信）=====
@@ -129,7 +138,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, updatedAt });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "不明なエラー";
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[notion/sync] error:", msg);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
