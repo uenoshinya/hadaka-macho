@@ -15,6 +15,9 @@ import { getNotionConfig, normalizePageId } from "@/lib/notion";
 export default function WeightPage() {
   const today = toDateString();
 
+  // 表示中の日付（デフォルトは今日）
+  const [selectedDate, setSelectedDate] = useState(today);
+
   const [weight, setWeight] = useState("");
   const [bodyFat, setBodyFat] = useState("");
   const [saved, setSaved] = useState(false);
@@ -24,19 +27,61 @@ export default function WeightPage() {
   const [syncResult, setSyncResult] = useState<string | null>(null);
   const weekDates = getWeekDates();
 
-  const loadRecords = () => {
-    setRecords(getWeightRecords());
-  };
+  const loadRecords = () => setRecords(getWeightRecords());
 
+  // 選択日付が変わったら入力欄をリセット・既存データ読込
   useEffect(() => {
     loadRecords();
-    const existing = getWeightRecords().find((r) => r.date === today);
+    const existing = getWeightRecords().find((r) => r.date === selectedDate);
     if (existing) {
       setWeight(String(existing.weight));
       setBodyFat(existing.bodyFat !== null ? String(existing.bodyFat) : "");
       setSavedTime("（記録済み）");
+    } else {
+      setWeight("");
+      setBodyFat("");
+      setSavedTime(null);
     }
-  }, [today]);
+    setSaved(false);
+  }, [selectedDate]);
+
+  // 日付ナビゲーション
+  const goToPrevDay = () => {
+    const d = new Date(selectedDate + "T00:00:00+09:00");
+    d.setDate(d.getDate() - 1);
+    setSelectedDate(toDateString(d));
+  };
+
+  const goToNextDay = () => {
+    const d = new Date(selectedDate + "T00:00:00+09:00");
+    d.setDate(d.getDate() + 1);
+    const next = toDateString(d);
+    if (next <= today) setSelectedDate(next);
+  };
+
+  const isToday = selectedDate === today;
+
+  // 日付ラベル
+  const dayNames = ["日", "月", "火", "水", "木", "金", "土"];
+  const selDate = new Date(selectedDate + "T00:00:00+09:00");
+  const dateLabel = `${selDate.getMonth() + 1}/${selDate.getDate()}（${dayNames[selDate.getDay()]}）`;
+
+  const handleSave = () => {
+    const w = parseFloat(weight);
+    if (isNaN(w) || w <= 0) return;
+    const record: WeightRecord = {
+      date: selectedDate,
+      weight: w,
+      bodyFat: bodyFat ? parseFloat(bodyFat) : null,
+    };
+    saveWeightRecord(record);
+    loadRecords();
+    const now = new Date();
+    const timeStr = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    setSavedTime(`${timeStr} 更新`);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
+  };
 
   const handleNotionSync = async () => {
     const cfg = getNotionConfig();
@@ -68,23 +113,6 @@ export default function WeightPage() {
     }
   };
 
-  const handleSave = () => {
-    const w = parseFloat(weight);
-    if (isNaN(w) || w <= 0) return;
-    const record: WeightRecord = {
-      date: today,
-      weight: w,
-      bodyFat: bodyFat ? parseFloat(bodyFat) : null,
-    };
-    saveWeightRecord(record);
-    loadRecords();
-    const now = new Date();
-    const timeStr = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-    setSavedTime(`${timeStr} 更新`);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
-  };
-
   // 直近レコード（7件）
   const recentRecords = weekDates.map((d) => records.find((r) => r.date === d) ?? null);
   const allWeights = records.map((r) => r.weight).filter(Boolean);
@@ -103,7 +131,14 @@ export default function WeightPage() {
       {/* ヘッダー */}
       <div className="flex items-center justify-between">
         <Link href="/" className="text-[#5C3D11]/70 hover:text-[#5C3D11] text-sm">← ホームへ</Link>
-        <span className="text-xs text-[#5C3D11]/50">{today}</span>
+        <button
+          onClick={() => setSelectedDate(today)}
+          className={`text-xs font-semibold px-2 py-1 rounded-lg transition-colors ${
+            isToday ? "text-[#D4A017]" : "text-[#5C3D11]/60 hover:text-[#D4A017]"
+          }`}
+        >
+          {isToday ? "📅 今日" : "今日に戻る"}
+        </button>
       </div>
 
       {/* タイトル */}
@@ -122,17 +157,39 @@ export default function WeightPage() {
         )}
       </div>
 
-      {/* 今日の入力 */}
+      {/* 日付ナビゲーション */}
+      <div className="flex items-center justify-between bg-white rounded-2xl border-2 border-[#D4A017]/30 px-4 py-3">
+        <button
+          onClick={goToPrevDay}
+          className="w-9 h-9 flex items-center justify-center rounded-xl bg-[#FFF8EC] hover:bg-[#D4A017]/20 text-[#5C3D11] font-bold text-lg transition-colors"
+        >
+          ←
+        </button>
+        <div className="text-center">
+          <p className="text-base font-bold text-[#2C1A0E]">{dateLabel}</p>
+          <p className="text-xs text-[#5C3D11]/50">{selectedDate}</p>
+        </div>
+        <button
+          onClick={goToNextDay}
+          disabled={isToday}
+          className="w-9 h-9 flex items-center justify-center rounded-xl bg-[#FFF8EC] hover:bg-[#D4A017]/20 text-[#5C3D11] font-bold text-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          →
+        </button>
+      </div>
+
+      {/* 入力フォーム */}
       <section className="bg-white rounded-2xl border-2 border-[#D4A017]/30 p-5">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-bold text-[#5C3D11]">📅 今日の記録（{today}）</h2>
+          <h2 className="text-sm font-bold text-[#5C3D11]">
+            {isToday ? "📅 今日の記録" : `📅 ${dateLabel}の記録`}
+          </h2>
           {savedTime && (
             <span className="text-xs text-[#5C3D11]/50">{savedTime}</span>
           )}
         </div>
 
         <div className="flex gap-4 mb-4">
-          {/* 体重 */}
           <div className="flex-1">
             <label className="block text-xs font-semibold text-[#5C3D11] mb-1.5">体重 (kg) <span className="text-red-400">*</span></label>
             <input
@@ -144,8 +201,6 @@ export default function WeightPage() {
               className="w-full rounded-xl border-2 border-[#D4A017]/30 focus:border-[#D4A017] bg-[#FFF8EC] px-3 py-2.5 text-sm text-[#2C1A0E] outline-none transition-colors text-center font-bold"
             />
           </div>
-
-          {/* 体脂肪率 */}
           <div className="flex-1">
             <label className="block text-xs font-semibold text-[#5C3D11] mb-1.5">体脂肪率 (%) <span className="text-[#5C3D11]/40">任意</span></label>
             <input
@@ -170,7 +225,7 @@ export default function WeightPage() {
               : "bg-[#D4A017] hover:bg-[#c4920f] text-[#2C1A0E] shadow-[0_4px_16px_rgba(212,160,23,0.35)]"
           }`}
         >
-          {saved ? "✅ 更新しました！" : savedTime ? "⚖️ 再記録する（上書き）" : "⚖️ 記録する"}
+          {saved ? "✅ 更新しました！" : savedTime && savedTime !== "（記録済み）" ? "⚖️ 再記録する（上書き）" : savedTime === "（記録済み）" ? "⚖️ 上書き保存" : "⚖️ 記録する"}
         </button>
       </section>
 
@@ -180,13 +235,12 @@ export default function WeightPage() {
 
         {allWeights.length > 0 ? (
           <>
-            {/* バーグラフ */}
             <div className="flex items-end justify-between gap-2 h-28 mb-2">
               {weekDates.map((date, i) => {
                 const rec = recentRecords[i];
-                const d = new Date(date);
+                const d = new Date(date + "T00:00:00+09:00");
                 const dayLabel = dayLabels[d.getDay()];
-                const isToday = date === today;
+                const isSelected = date === selectedDate;
 
                 const barHeight = rec
                   ? maxW === minW
@@ -195,29 +249,31 @@ export default function WeightPage() {
                   : 0;
 
                 return (
-                  <div key={date} className="flex-1 flex flex-col items-center gap-1">
+                  <button
+                    key={date}
+                    onClick={() => setSelectedDate(date)}
+                    className="flex-1 flex flex-col items-center gap-1 group"
+                  >
                     {rec && (
                       <span className="text-[10px] font-bold text-[#D4A017]">{rec.weight}</span>
                     )}
                     <div className="w-full flex items-end justify-center" style={{ height: "80px" }}>
                       {rec ? (
                         <div
-                          className={`w-full rounded-t-lg transition-all ${isToday ? "bg-[#D4A017]" : "bg-[#D4A017]/40"}`}
+                          className={`w-full rounded-t-lg transition-all ${isSelected ? "bg-[#D4A017]" : "bg-[#D4A017]/40 group-hover:bg-[#D4A017]/60"}`}
                           style={{ height: `${barHeight}px` }}
                         />
                       ) : (
-                        <div className="w-full h-2 rounded-t-lg bg-[#5C3D11]/10" />
+                        <div className="w-full h-2 rounded-t-lg bg-[#5C3D11]/10 group-hover:bg-[#D4A017]/20 transition-colors" />
                       )}
                     </div>
-                    <span className={`text-[10px] font-semibold ${isToday ? "text-[#D4A017]" : "text-[#5C3D11]/60"}`}>
+                    <span className={`text-[10px] font-semibold ${isSelected ? "text-[#D4A017]" : "text-[#5C3D11]/60"}`}>
                       {dayLabel}
                     </span>
-                  </div>
+                  </button>
                 );
               })}
             </div>
-
-            {/* 最小・最大 */}
             <div className="flex justify-between text-xs text-[#5C3D11]/60 mt-2">
               <span>最小: <strong>{minW} kg</strong></span>
               <span>最大: <strong>{maxW} kg</strong></span>
@@ -237,8 +293,14 @@ export default function WeightPage() {
           <h2 className="text-sm font-bold text-[#5C3D11] mb-3">🗓️ 記録履歴</h2>
           <div className="flex flex-col gap-2">
             {[...records].reverse().slice(0, 10).map((r) => (
-              <div key={r.date} className={`flex items-center justify-between py-2 px-3 rounded-xl ${r.date === today ? "bg-[#D4A017]/10" : "bg-[#FFF8EC]"}`}>
-                <span className={`text-xs font-semibold ${r.date === today ? "text-[#D4A017]" : "text-[#5C3D11]/70"}`}>
+              <button
+                key={r.date}
+                onClick={() => setSelectedDate(r.date)}
+                className={`flex items-center justify-between py-2 px-3 rounded-xl text-left transition-colors ${
+                  r.date === selectedDate ? "bg-[#D4A017]/20 border border-[#D4A017]/40" : "bg-[#FFF8EC] hover:bg-[#D4A017]/10"
+                }`}
+              >
+                <span className={`text-xs font-semibold ${r.date === selectedDate ? "text-[#D4A017]" : "text-[#5C3D11]/70"}`}>
                   {r.date} {r.date === today ? "(今日)" : ""}
                 </span>
                 <div className="flex items-center gap-3 text-sm font-bold">
@@ -247,7 +309,7 @@ export default function WeightPage() {
                     <span className="text-xs text-[#5C3D11]/60">{r.bodyFat}%</span>
                   )}
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </section>

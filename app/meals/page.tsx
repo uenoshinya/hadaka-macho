@@ -12,14 +12,9 @@ import {
 } from "@/lib/storage";
 import { getNotionConfig, normalizePageId } from "@/lib/notion";
 
-// ===== 型 =====
 type MealKey = "breakfast" | "lunch" | "dinner";
 
-const EMPTY_MEAL = (): MealEntry => ({
-  content: "",
-  calories: 0,
-  isEatingOut: false,
-});
+const EMPTY_MEAL = (): MealEntry => ({ content: "", calories: 0, isEatingOut: false });
 
 const MEAL_LABELS: Record<MealKey, { label: string; emoji: string; placeholder: string }> = {
   breakfast: { label: "朝食", emoji: "🌅", placeholder: "例：納豆ごはん、味噌汁、目玉焼き" },
@@ -27,9 +22,11 @@ const MEAL_LABELS: Record<MealKey, { label: string; emoji: string; placeholder: 
   dinner:    { label: "夕食", emoji: "🌙", placeholder: "例：サーモン刺身、玄米、豆腐サラダ" },
 };
 
-// ===== コンポーネント =====
 export default function MealsPage() {
   const today = toDateString();
+
+  // 表示中の日付（デフォルトは今日）
+  const [selectedDate, setSelectedDate] = useState(today);
 
   const [meals, setMeals] = useState<Record<MealKey, MealEntry>>({
     breakfast: EMPTY_MEAL(),
@@ -37,56 +34,60 @@ export default function MealsPage() {
     dinner:    EMPTY_MEAL(),
   });
   const [note, setNote] = useState("");
-
-  // 各食事・メモの保存状態（"idle" | "saving" | "saved"）
-  const [savedMeals, setSavedMeals] = useState<Record<MealKey, boolean>>({
-    breakfast: false,
-    lunch:     false,
-    dinner:    false,
-  });
+  const [savedMeals, setSavedMeals] = useState<Record<MealKey, boolean>>({ breakfast: false, lunch: false, dinner: false });
   const [noteSaved, setNoteSaved] = useState(false);
-
-  // 各食事の最終保存時刻
-  const [savedTimes, setSavedTimes] = useState<Record<MealKey, string | null>>({
-    breakfast: null,
-    lunch:     null,
-    dinner:    null,
-  });
-
+  const [savedTimes, setSavedTimes] = useState<Record<MealKey, string | null>>({ breakfast: null, lunch: null, dinner: null });
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string | null>(null);
 
-  // 既存データ読込
+  // 選択日付が変わったら既存データ読込
   useEffect(() => {
-    const record = getMealRecord(today);
+    const record = getMealRecord(selectedDate);
     if (record) {
-      setNote(record.note);
+      setNote(record.note ?? "");
       (["breakfast", "lunch", "dinner"] as MealKey[]).forEach((k) => {
-        const entry = record[k];
-        if (entry) {
-          setMeals((prev) => ({ ...prev, [k]: entry }));
-        }
+        setMeals((prev) => ({ ...prev, [k]: record[k] ?? EMPTY_MEAL() }));
+        setSavedTimes((prev) => ({ ...prev, [k]: record[k]?.content ? "（記録済み）" : null }));
       });
+    } else {
+      setNote("");
+      setMeals({ breakfast: EMPTY_MEAL(), lunch: EMPTY_MEAL(), dinner: EMPTY_MEAL() });
+      setSavedTimes({ breakfast: null, lunch: null, dinner: null });
     }
-  }, [today]);
+    setSavedMeals({ breakfast: false, lunch: false, dinner: false });
+    setNoteSaved(false);
+  }, [selectedDate]);
+
+  // 日付ナビゲーション
+  const isToday = selectedDate === today;
+  const dayNames = ["日", "月", "火", "水", "木", "金", "土"];
+  const selDate = new Date(selectedDate + "T00:00:00+09:00");
+  const dateLabel = `${selDate.getMonth() + 1}/${selDate.getDate()}（${dayNames[selDate.getDay()]}）`;
+
+  const goToPrevDay = () => {
+    const d = new Date(selectedDate + "T00:00:00+09:00");
+    d.setDate(d.getDate() - 1);
+    setSelectedDate(toDateString(d));
+  };
+
+  const goToNextDay = () => {
+    const d = new Date(selectedDate + "T00:00:00+09:00");
+    d.setDate(d.getDate() + 1);
+    const next = toDateString(d);
+    if (next <= today) setSelectedDate(next);
+  };
 
   const updateMeal = (key: MealKey, patch: Partial<MealEntry>) => {
     setMeals((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
     setSavedMeals((prev) => ({ ...prev, [key]: false }));
   };
 
-  // 個別食事の保存（その1食だけ保存）
   const handleSaveMeal = (key: MealKey) => {
-    const existing = getMealRecord(today) ?? {
-      date: today,
-      breakfast: EMPTY_MEAL(),
-      lunch: EMPTY_MEAL(),
-      dinner: EMPTY_MEAL(),
-      note: "",
+    const existing = getMealRecord(selectedDate) ?? {
+      date: selectedDate,
+      breakfast: EMPTY_MEAL(), lunch: EMPTY_MEAL(), dinner: EMPTY_MEAL(), note: "",
     };
-    const updated: MealRecord = { ...existing, [key]: meals[key] };
-    saveMealRecord(updated);
-
+    saveMealRecord({ ...existing, [key]: meals[key] });
     const now = new Date();
     const timeStr = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
     setSavedMeals((prev) => ({ ...prev, [key]: true }));
@@ -94,21 +95,16 @@ export default function MealsPage() {
     setTimeout(() => setSavedMeals((prev) => ({ ...prev, [key]: false })), 2500);
   };
 
-  // メモ保存
   const handleSaveNote = () => {
-    const existing = getMealRecord(today) ?? {
-      date: today,
-      breakfast: EMPTY_MEAL(),
-      lunch: EMPTY_MEAL(),
-      dinner: EMPTY_MEAL(),
-      note: "",
+    const existing = getMealRecord(selectedDate) ?? {
+      date: selectedDate,
+      breakfast: EMPTY_MEAL(), lunch: EMPTY_MEAL(), dinner: EMPTY_MEAL(), note: "",
     };
     saveMealRecord({ ...existing, note });
     setNoteSaved(true);
     setTimeout(() => setNoteSaved(false), 2500);
   };
 
-  // Notion同期
   const handleNotionSync = async () => {
     const cfg = getNotionConfig();
     if (!cfg?.token || !cfg?.dataSyncPageId) {
@@ -126,9 +122,7 @@ export default function MealsPage() {
         body: JSON.stringify({
           token: cfg.token,
           pageId: normalizePageId(cfg.dataSyncPageId),
-          workouts,
-          meals: mealData,
-          weights,
+          workouts, meals: mealData, weights,
         }),
       });
       const data = await res.json();
@@ -146,14 +140,42 @@ export default function MealsPage() {
       {/* ヘッダー */}
       <div className="flex items-center justify-between">
         <Link href="/" className="text-[#5C3D11]/70 hover:text-[#5C3D11] text-sm">← ホームへ</Link>
-        <span className="text-xs text-[#5C3D11]/50">{today}</span>
+        <button
+          onClick={() => setSelectedDate(today)}
+          className={`text-xs font-semibold px-2 py-1 rounded-lg transition-colors ${
+            isToday ? "text-[#D4A017]" : "text-[#5C3D11]/60 hover:text-[#D4A017]"
+          }`}
+        >
+          {isToday ? "📅 今日" : "今日に戻る"}
+        </button>
       </div>
 
       {/* タイトル */}
       <div className="rounded-2xl bg-[#2C1A0E] px-6 py-5 text-center">
         <span className="text-4xl">🍽️</span>
-        <h1 className="mt-2 text-xl font-bold text-[#D4A017]">今日の食事記録</h1>
-        <p className="mt-1 text-xs text-[#FFF8EC]/60">食べたタイミングで記録 → いつでも更新OK</p>
+        <h1 className="mt-2 text-xl font-bold text-[#D4A017]">食事記録</h1>
+        <p className="mt-1 text-xs text-[#FFF8EC]/60">いつでも・何度でも更新OK</p>
+      </div>
+
+      {/* 日付ナビゲーション */}
+      <div className="flex items-center justify-between bg-white rounded-2xl border-2 border-[#D4A017]/30 px-4 py-3">
+        <button
+          onClick={goToPrevDay}
+          className="w-9 h-9 flex items-center justify-center rounded-xl bg-[#FFF8EC] hover:bg-[#D4A017]/20 text-[#5C3D11] font-bold text-lg transition-colors"
+        >
+          ←
+        </button>
+        <div className="text-center">
+          <p className="text-base font-bold text-[#2C1A0E]">{dateLabel}</p>
+          <p className="text-xs text-[#5C3D11]/50">{selectedDate}{isToday ? " (今日)" : ""}</p>
+        </div>
+        <button
+          onClick={goToNextDay}
+          disabled={isToday}
+          className="w-9 h-9 flex items-center justify-center rounded-xl bg-[#FFF8EC] hover:bg-[#D4A017]/20 text-[#5C3D11] font-bold text-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          →
+        </button>
       </div>
 
       {/* トレーナー連携の説明 */}
@@ -162,12 +184,12 @@ export default function MealsPage() {
         <div>
           <p className="text-xs font-bold text-[#5C3D11]">トレーナーが分析します</p>
           <p className="text-xs text-[#5C3D11]/70 mt-0.5 leading-relaxed">
-            食事を入力して「Notionに同期」すると、PCのClaude Codeトレーナーがカロリー計算・食事アドバイスを「アドバイス」タブに送ります。
+            食事を入力して「Notionに同期」すると、Claude Codeトレーナーが食事アドバイスを「アドバイス」タブに送ります。
           </p>
         </div>
       </div>
 
-      {/* 朝食・昼食・夕食 セクション（個別保存） */}
+      {/* 朝食・昼食・夕食 */}
       {(["breakfast", "lunch", "dinner"] as MealKey[]).map((key) => {
         const { label, emoji, placeholder } = MEAL_LABELS[key];
         const meal = meals[key];
@@ -177,7 +199,6 @@ export default function MealsPage() {
 
         return (
           <section key={key} className="bg-white rounded-2xl border-2 border-[#D4A017]/30 overflow-hidden">
-            {/* セクションヘッダー */}
             <div className="flex items-center justify-between px-5 py-3 bg-[#FFF8EC] border-b border-[#D4A017]/20">
               <span className="font-bold text-[#2C1A0E] flex items-center gap-2">
                 <span className="text-xl">{emoji}</span> {label}
@@ -185,9 +206,7 @@ export default function MealsPage() {
                   <span className="text-[10px] text-[#5C3D11]/50 font-normal ml-1">（{savedTime}保存済）</span>
                 )}
               </span>
-
               <div className="flex items-center gap-3">
-                {/* 自炊/外食 トグル */}
                 <label className="flex items-center gap-1.5 cursor-pointer">
                   <div
                     onClick={() => updateMeal(key, { isEatingOut: !meal.isEatingOut })}
@@ -199,8 +218,6 @@ export default function MealsPage() {
                     {meal.isEatingOut ? "外食" : "自炊"}
                   </span>
                 </label>
-
-                {/* 個別保存ボタン */}
                 <button
                   onClick={() => handleSaveMeal(key)}
                   disabled={!hasContent}
@@ -216,9 +233,7 @@ export default function MealsPage() {
                 </button>
               </div>
             </div>
-
             <div className="p-4 flex flex-col gap-3">
-              {/* 食事内容 */}
               <textarea
                 value={meal.content}
                 onChange={(e) => updateMeal(key, { content: e.target.value })}
@@ -226,8 +241,6 @@ export default function MealsPage() {
                 rows={2}
                 className="w-full rounded-xl border-2 border-[#D4A017]/20 focus:border-[#D4A017] bg-[#FFF8EC] px-3 py-2.5 text-sm text-[#2C1A0E] outline-none resize-none transition-colors leading-relaxed"
               />
-
-              {/* 入力済みバッジ */}
               {hasContent && (
                 <div className="flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-[#D4A017]" />
@@ -244,7 +257,7 @@ export default function MealsPage() {
       {/* 全体メモ */}
       <section>
         <div className="flex items-center justify-between mb-2">
-          <label className="block text-sm font-semibold text-[#5C3D11]">📝 今日の食事メモ（任意）</label>
+          <label className="block text-sm font-semibold text-[#5C3D11]">📝 メモ（任意）</label>
           <button
             onClick={handleSaveNote}
             disabled={!note.trim()}
