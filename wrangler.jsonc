@@ -1,0 +1,17 @@
+{
+  // Cloudflare Pages + next-on-pages 設定
+  "name": "hadaka-macho",
+  "compatibility_date": "2024-09-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "pages_build_output_dir": ".vercel/output/static",
+
+  // ⚠️ 重要: preview URLを無効化（認証バイパス防止）
+  "preview_urls": false,
+
+  // 環境変数はすべて Cloudflare Secrets に保存（ソースコードには書かない）
+  // セットアップ方法:
+  //   npx wrangler pages secret put ANTHROPIC_API_KEY
+  //   npx wrangler pages secret put NOTION_TOKEN
+  //   npx wrangler pages secret put NOTION_DATA_SYNC_PAGE_ID
+  //   npx wrangler pages secret put NOTION_ADVICE_PAGE_ID
+}

@@ -3,6 +3,7 @@ import { extractTextFromBlocks } from "@/lib/notion";
 
 // キャッシュを完全無効化（トレーナーの更新を即時反映するため）
 export const dynamic = "force-dynamic";
+export const runtime = "edge";
 
 const NOTION_API = "https://api.notion.com/v1";
 const NOTION_VERSION = "2022-06-28";
