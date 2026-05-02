@@ -34,7 +34,6 @@ async function clearPageBlocks(pageId: string, token: string): Promise<void> {
       : `${NOTION_API}/blocks/${pageId}/children?page_size=100`;
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${token}`, "Notion-Version": NOTION_VERSION },
-      cache: "no-store",
     });
     if (!res.ok) return;
     const data = await res.json();
@@ -70,7 +69,6 @@ async function appendBlocks(pageId: string, token: string, blocks: unknown[]): P
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ children: blocks.slice(i, i + CHUNK) }),
-      cache: "no-store",
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

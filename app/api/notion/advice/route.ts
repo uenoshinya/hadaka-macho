@@ -26,7 +26,6 @@ export async function GET(req: NextRequest) {
         Authorization: `Bearer ${token}`,
         "Notion-Version": NOTION_VERSION,
       },
-      cache: "no-store",
     });
 
     if (!res.ok) {
@@ -43,7 +42,6 @@ export async function GET(req: NextRequest) {
         Authorization: `Bearer ${token}`,
         "Notion-Version": NOTION_VERSION,
       },
-      cache: "no-store",
     });
     const pageData = pageRes.ok ? await pageRes.json() : null;
     const lastEdited = pageData?.last_edited_time ?? null;

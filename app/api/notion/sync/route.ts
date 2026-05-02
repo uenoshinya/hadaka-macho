@@ -50,7 +50,6 @@ async function clearPageBlocks(pageId: string, token: string): Promise<void> {
         Authorization: `Bearer ${token}`,
         "Notion-Version": NOTION_VERSION,
       },
-      cache: "no-store",
     });
 
     if (!res.ok) {
@@ -76,7 +75,6 @@ async function clearPageBlocks(pageId: string, token: string): Promise<void> {
               Authorization: `Bearer ${token}`,
               "Notion-Version": NOTION_VERSION,
             },
-            cache: "no-store",
           })
         )
       );
@@ -103,7 +101,6 @@ async function appendBlocks(pageId: string, token: string, blocks: unknown[]): P
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ children: chunk }),
-      cache: "no-store",
     });
     if (!res.ok) {
       const err = await res.json();
