@@ -27,7 +27,7 @@ export default function Home() {
   });
   const [latestWeight] = useState<WeightRecord | null>(() => getLatestWeight());
   const [advicePreview, setAdvicePreview] = useState<string | null>(null);
-  const [notionConfigured, setNotionConfigured] = useState(() => {
+  const [notionConfigured] = useState(() => {
     const cfg = getNotionConfig();
     return !!(cfg?.token && cfg?.advicePageId);
   });
@@ -36,7 +36,7 @@ export default function Home() {
   useEffect(() => {
     const cfg = getNotionConfig();
     if (cfg?.token && cfg?.advicePageId) {
-      setNotionConfigured(true);
+      // notionConfiguredはlazy initializerで初期化済みのためここでは不要
       fetch(`/api/notion/advice?token=${encodeURIComponent(cfg.token)}&pageId=${encodeURIComponent(normalizePageId(cfg.advicePageId))}`)
         .then((r) => r.json())
         .then((data) => {
