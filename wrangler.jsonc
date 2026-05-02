@@ -5,8 +5,9 @@
   "compatibility_flags": ["nodejs_compat"],
   "pages_build_output_dir": ".vercel/output/static",
 
-  // ⚠️ 重要: preview URLを無効化（認証バイパス防止）
-  "preview_urls": false,
+  // ⚠️ 重要: preview URLの無効化はダッシュボードで行う
+  // Pages > Settings > General > Preview deployment settings > Disable preview URLs
+  // （wrangler.jsonc の preview_urls はPagesプロジェクトでは未対応）
 
   // 環境変数はすべて Cloudflare Secrets に保存（ソースコードには書かない）
   // セットアップ方法:
