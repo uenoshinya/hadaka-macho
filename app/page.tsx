@@ -16,20 +16,24 @@ export default function Home() {
   const today = toDateString();
   const todayWorkout = getTodayWorkout();
 
-  const [workoutDone, setWorkoutDone] = useState(false);
-  const [mealDone, setMealDone] = useState(false);
-  const [latestWeight, setLatestWeight] = useState<WeightRecord | null>(null);
-  const [advicePreview, setAdvicePreview] = useState<string | null>(null);
-  const [notionConfigured, setNotionConfigured] = useState(false);
-
-  useEffect(() => {
+  // localStorageからの同期読み込みはlazy initializerで行う（useEffect内でのsetState警告を回避）
+  const [workoutDone] = useState(() => {
     const wr = getWorkoutRecord(today);
-    setWorkoutDone(wr?.completed ?? false);
+    return wr?.completed ?? false;
+  });
+  const [mealDone] = useState(() => {
     const mr = getMealRecord(today);
-    setMealDone(!!(mr?.breakfast?.content || mr?.lunch?.content || mr?.dinner?.content));
-    setLatestWeight(getLatestWeight());
+    return !!(mr?.breakfast?.content || mr?.lunch?.content || mr?.dinner?.content);
+  });
+  const [latestWeight] = useState<WeightRecord | null>(() => getLatestWeight());
+  const [advicePreview, setAdvicePreview] = useState<string | null>(null);
+  const [notionConfigured, setNotionConfigured] = useState(() => {
+    const cfg = getNotionConfig();
+    return !!(cfg?.token && cfg?.advicePageId);
+  });
 
-    // アドバイスプレビューを取得
+  // 非同期処理（アドバイスプレビューのfetch）のみuseEffectで行う
+  useEffect(() => {
     const cfg = getNotionConfig();
     if (cfg?.token && cfg?.advicePageId) {
       setNotionConfigured(true);
@@ -37,14 +41,13 @@ export default function Home() {
         .then((r) => r.json())
         .then((data) => {
           if (data.success && data.content) {
-            // 最初の2〜3行だけ表示
             const lines = data.content.split("\n").filter((l: string) => l.trim()).slice(0, 3);
             setAdvicePreview(lines.join(" / "));
           }
         })
         .catch(() => {});
     }
-  }, [today]);
+  }, []);
 
   const dayNames = ["日", "月", "火", "水", "木", "金", "土"];
   // JST（UTC+9）で日付・曜日を計算

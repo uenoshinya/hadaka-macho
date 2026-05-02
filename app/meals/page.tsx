@@ -8,7 +8,6 @@ import {
   saveMealRecord,
   exportAllDataForNotion,
   type MealEntry,
-  type MealRecord,
 } from "@/lib/storage";
 import { getNotionConfig, normalizePageId } from "@/lib/notion";
 
