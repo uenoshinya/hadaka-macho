@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <?!= include('Style'); ?>
+</head>
+<body>
+  <!-- ============================================================
+       ヘッダー（全画面共通）
+       ============================================================ -->
+  <header class="app-header">
+    <button type="button" id="back-button" class="back-button" aria-label="戻る" hidden>‹ 戻る</button>
+    <div class="header-title">
+      <span id="header-brand" class="header-brand">CLOSET CHECK</span>
+      <span id="header-screen" class="header-screen"></span>
+    </div>
+  </header>
+
+  <main class="app-main">
+
+    <!-- 読み込み中・読み込み失敗の表示 -->
+    <section id="screen-loading" class="screen">
+      <p id="loading-message" class="center-message">読み込み中…</p>
+      <div class="center-message">
+        <button type="button" id="retry-button" class="button button-secondary" hidden>再読み込み</button>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         ① ホーム画面
+         ============================================================ -->
+    <section id="screen-home" class="screen" hidden>
+      <div class="hero">
+        <p class="hero-lead">「なんとなく買う」をなくし、<br>納得して洋服を購入する。</p>
+      </div>
+
+      <div class="card-list">
+        <button type="button" class="card" data-action="open-check" data-mode="vintage">
+          <span class="card-label">CONDITION</span>
+          <span class="card-title">古着の状態チェック</span>
+          <span class="card-text">生地・シミ・ダメージ・ニオイを確認</span>
+          <span class="card-progress" data-progress-for="vintage"></span>
+        </button>
+
+        <button type="button" class="card" data-action="open-check" data-mode="fitting">
+          <span class="card-label">FITTING</span>
+          <span class="card-title">試着・フィット感チェック</span>
+          <span class="card-text">サイズ感・丈・動きやすさを確認</span>
+          <span class="card-progress" data-progress-for="fitting"></span>
+        </button>
+
+        <button type="button" class="card" data-action="open-history">
+          <span class="card-label">HISTORY</span>
+          <span class="card-title">購入履歴</span>
+          <span class="card-text">過去にチェックした商品を見る</span>
+        </button>
+
+        <button type="button" class="card" data-action="open-guide">
+          <span class="card-label">GUIDE</span>
+          <span class="card-title">アプリの使い方</span>
+          <span class="card-text">はじめての方はこちら</span>
+        </button>
+      </div>
+
+      <div id="home-current" class="home-current" hidden>
+        <button type="button" class="button button-primary button-block" data-action="open-judge">チェック結果を判定する</button>
+        <button type="button" class="button button-text" data-action="reset-check">チェック内容をリセット</button>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         ②③ チェック画面（古着の状態 / 試着・フィット感 で共用）
+         ============================================================ -->
+    <section id="screen-check" class="screen screen-with-bar" hidden>
+      <p id="check-intro" class="screen-intro"></p>
+      <ul class="legend">
+        <li><span class="legend-box legend-ok">✓</span>問題なし</li>
+        <li><span class="legend-box legend-concern">!</span>気になる</li>
+        <li><span class="badge badge-critical">重要</span>見送り判断に直結</li>
+      </ul>
+      <!-- カテゴリーと項目は JavaScript.html で生成します -->
+      <div id="check-categories"></div>
+    </section>
+
+    <!-- ============================================================
+         ④ 購入判定画面（STEP 4 で実装）
+         ============================================================ -->
+    <section id="screen-judge" class="screen" hidden>
+      <p class="center-message">判定機能は STEP 4 で実装します。</p>
+    </section>
+
+    <!-- ============================================================
+         ⑥ 購入履歴画面（STEP 6 で実装）
+         ============================================================ -->
+    <section id="screen-history" class="screen" hidden>
+      <p class="center-message">購入履歴は STEP 6 で実装します。</p>
+    </section>
+
+    <!-- ============================================================
+         アプリの使い方
+         ============================================================ -->
+    <section id="screen-guide" class="screen" hidden>
+      <article class="guide">
+        <h2 class="section-title">使い方</h2>
+        <ol class="guide-steps">
+          <li><strong>古着の状態チェック</strong><br>古着の場合は、生地・シミ・ダメージ・ニオイを順番に確認します。新品なら省略して構いません。</li>
+          <li><strong>試着・フィット感チェック</strong><br>試着室で、サイズ感や動きやすさを確認します。関係のないカテゴリー（例：ジャケットのときの「パンツ」）は「対象外」にできます。</li>
+          <li><strong>判定を確認</strong><br>「買い・要検討・見送り」の参考判定と、その理由が表示されます。</li>
+          <li><strong>商品情報を保存</strong><br>商品名や価格、メモと一緒に記録しておくと、後から見返せます。</li>
+        </ol>
+
+        <h2 class="section-title">チェックのつけ方</h2>
+        <ul class="guide-list">
+          <li><span class="legend-box legend-ok">✓</span>問題がなければ、項目をタップしてチェック</li>
+          <li><span class="legend-box legend-concern">!</span>問題を見つけたら「気になる」をタップ</li>
+          <li>分からない・見ていない項目は、そのままで構いません（未確認）</li>
+        </ul>
+
+        <h2 class="section-title">判定について</h2>
+        <p>チェックの数ではなく、問題の<strong>重大さ</strong>を優先して判定します。「重要」マークの項目（生地の破れ・劣化、カビ臭、明確な窮屈さ など）が「気になる」の場合は、他がすべて問題なくても「見送り」になります。</p>
+        <p class="notice">判定はあくまで参考情報です。最終的な判断はご自身で行ってください。</p>
+      </article>
+    </section>
+  </main>
+
+  <!-- チェック画面の下部固定バー（進捗表示と判定ボタン） -->
+  <div id="check-bar" class="check-bar" hidden>
+    <div class="check-bar-progress">
+      <div class="check-bar-text">
+        <span>進捗 <strong id="bar-percent">0%</strong></span>
+        <span id="bar-detail" class="check-bar-detail"></span>
+      </div>
+      <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" id="bar-progress">
+        <div class="progress-fill" id="bar-fill"></div>
+      </div>
+    </div>
+    <button type="button" class="button button-primary" data-action="open-judge">判定へ進む</button>
+  </div>
+
+  <!-- 成功・失敗のお知らせ表示 -->
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <?!= include('JavaScript'); ?>
+</body>
+</html>

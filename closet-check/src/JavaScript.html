@@ -1,0 +1,432 @@
+<script>
+/**
+ * ============================================================
+ *  CLOSET CHECK - 画面側の処理
+ * ============================================================
+ *  ・画面の切り替え、チェック状態の管理、進捗の計算を行います。
+ *  ・サーバーとの通信は google.script.run を使います。
+ *  ・【XSS 対策】画面に文字を出すときは必ず textContent を使い、
+ *    innerHTML は使いません（入力された文字がそのまま表示されるだけで、
+ *    HTML として実行されることはありません）。
+ * ============================================================
+ */
+(function () {
+  'use strict';
+
+  /* ------------------------------------------------------------
+   * 設定：チェック画面の種類
+   * ------------------------------------------------------------ */
+  var MODES = {
+    vintage: {
+      title: '古着の状態チェック',
+      intro: '明るい場所で、生地・シミ・ダメージ・ニオイを確認しましょう。新品の場合は省略して構いません。',
+      targets: ['vintage', 'both'],   // Checklist の target_type のうち、この画面に出すもの
+      canExclude: false               // カテゴリーを「対象外」にできるか
+    },
+    fitting: {
+      title: '試着・フィット感チェック',
+      intro: '試着して、鏡の前で動きながら確認しましょう。関係のないカテゴリーは「対象外」にできます。',
+      targets: ['fitting', 'both'],
+      canExclude: true
+    }
+  };
+
+  var SCREEN_TITLES = {
+    loading: '',
+    home: '',
+    check: '',             // チェック画面はモードごとのタイトルを使う
+    judge: '購入判定',
+    history: '購入履歴',
+    guide: 'アプリの使い方'
+  };
+
+  var STATUS_OK = 'ok';
+  var STATUS_CONCERN = 'concern';
+
+  /* ------------------------------------------------------------
+   * アプリの状態（今どの画面か・何にチェックしたか）
+   * ------------------------------------------------------------ */
+  var state = {
+    data: null,       // サーバーから受け取ったチェック項目と設定
+    statuses: {},     // { item_id: 'ok' | 'concern' }  ※未確認は登録しない
+    excluded: {},     // { 'fitting|C. パンツのサイズ感': true }  対象外のカテゴリー
+    screen: 'loading',
+    mode: null        // 'vintage' | 'fitting'
+  };
+
+  var toastTimer = null;
+
+  /* ============================================================
+   * 起動
+   * ============================================================ */
+  document.addEventListener('DOMContentLoaded', function () {
+    document.addEventListener('click', onDocumentClick);
+    byId('back-button').addEventListener('click', goBack);
+    byId('retry-button').addEventListener('click', loadInitialData);
+    loadInitialData();
+  });
+
+  /** サーバーからチェック項目と設定を読み込みます */
+  function loadInitialData() {
+    showScreen('loading');
+    byId('loading-message').textContent = '読み込み中…';
+    byId('retry-button').hidden = true;
+
+    google.script.run
+      .withSuccessHandler(function (data) {
+        state.data = data;
+        byId('header-brand').textContent = data.appName;
+        // シートの入力ミスがあれば開発者向けに表示（アプリは止めない）
+        (data.warnings || []).forEach(function (w) { console.warn('[Checklist] ' + w); });
+        if (data.items.length === 0) {
+          showToast('チェック項目がありません。スプレッドシートを確認してください。', true);
+        }
+        showScreen('home');
+      })
+      .withFailureHandler(function (error) {
+        byId('loading-message').textContent =
+          '読み込みに失敗しました。通信環境を確認して、もう一度お試しください。\n（' + errorMessage(error) + '）';
+        byId('retry-button').hidden = false;
+      })
+      .getInitialData();
+  }
+
+  /* ============================================================
+   * 画面の切り替え
+   * ============================================================ */
+
+  /**
+   * 指定した画面だけを表示します。
+   * @param {string} screen 'home' | 'check' | 'judge' | 'history' | 'guide' | 'loading'
+   * @param {string=} mode  チェック画面のときの種類
+   */
+  function showScreen(screen, mode) {
+    state.screen = screen;
+    if (mode) state.mode = mode;
+
+    var sections = document.querySelectorAll('.screen');
+    for (var i = 0; i < sections.length; i++) {
+      sections[i].hidden = (sections[i].id !== 'screen-' + screen);
+    }
+
+    var title = screen === 'check' ? MODES[state.mode].title : SCREEN_TITLES[screen];
+    byId('header-screen').textContent = title;
+    byId('back-button').hidden = (screen === 'home' || screen === 'loading');
+    byId('check-bar').hidden = (screen !== 'check');
+
+    if (screen === 'home') updateHome();
+    if (screen === 'check') renderCheck(state.mode);
+
+    window.scrollTo(0, 0);
+  }
+
+  /** ヘッダーの「戻る」ボタン */
+  function goBack() {
+    showScreen('home');
+  }
+
+  /** data-action 属性を持つボタンのクリックをまとめて処理します */
+  function onDocumentClick(event) {
+    var target = event.target.closest('[data-action]');
+    if (!target) return;
+
+    switch (target.getAttribute('data-action')) {
+      case 'open-check':
+        showScreen('check', target.getAttribute('data-mode'));
+        break;
+      case 'open-history':
+        showScreen('history');
+        break;
+      case 'open-guide':
+        showScreen('guide');
+        break;
+      case 'open-judge':
+        // STEP 4 で判定画面を実装します
+        showToast('判定機能は STEP 4 で実装します');
+        break;
+      case 'reset-check':
+        resetCheck();
+        break;
+    }
+  }
+
+  /* ============================================================
+   * ホーム画面
+   * ============================================================ */
+
+  /** ホームのカードに、各チェックの進み具合を表示します */
+  function updateHome() {
+    var hasAny = false;
+    Object.keys(MODES).forEach(function (mode) {
+      var p = computeProgress(mode);
+      var el = document.querySelector('[data-progress-for="' + mode + '"]');
+      if (p.done > 0) {
+        hasAny = true;
+        el.textContent = '進捗 ' + p.percent + '%' + (p.concern > 0 ? '・気になる ' + p.concern + '件' : '');
+      } else {
+        el.textContent = '';
+      }
+    });
+    byId('home-current').hidden = !hasAny;
+  }
+
+  /** チェック内容をすべて消して、新しい商品のチェックを始めます */
+  function resetCheck() {
+    if (!window.confirm('チェック内容をすべて消去します。よろしいですか？')) return;
+    state.statuses = {};
+    state.excluded = {};
+    updateHome();
+    showToast('チェック内容をリセットしました');
+  }
+
+  /* ============================================================
+   * チェック画面
+   * ============================================================ */
+
+  /** この画面に表示する項目（表示順）を返します */
+  function itemsFor(mode) {
+    var targets = MODES[mode].targets;
+    return state.data.items.filter(function (item) {
+      return targets.indexOf(item.targetType) !== -1;
+    });
+  }
+
+  /** 項目をカテゴリーごとにまとめます（表示順は保ったまま） */
+  function groupByCategory(items) {
+    var groups = [];
+    var index = {};
+    items.forEach(function (item) {
+      if (!(item.category in index)) {
+        index[item.category] = groups.length;
+        groups.push({ category: item.category, items: [] });
+      }
+      groups[index[item.category]].items.push(item);
+    });
+    return groups;
+  }
+
+  function excludeKey(mode, category) {
+    return mode + '|' + category;
+  }
+
+  /** チェック画面を作り直します */
+  function renderCheck(mode) {
+    byId('check-intro').textContent = MODES[mode].intro;
+
+    var container = byId('check-categories');
+    container.textContent = ''; // 中身を空にする
+
+    groupByCategory(itemsFor(mode)).forEach(function (group) {
+      container.appendChild(buildCategory(mode, group));
+    });
+    updateProgress();
+  }
+
+  /** カテゴリー 1 つ分の要素を作ります */
+  function buildCategory(mode, group) {
+    var key = excludeKey(mode, group.category);
+    var excluded = !!state.excluded[key];
+
+    var section = el('section', { className: 'category' + (excluded ? ' is-excluded' : '') });
+    section.setAttribute('data-category', group.category);
+
+    var header = el('div', { className: 'category-header' });
+    header.appendChild(el('h2', { className: 'category-title', text: group.category }));
+    header.appendChild(el('span', { className: 'category-count' }));
+
+    if (MODES[mode].canExclude) {
+      var button = el('button', { className: 'exclude-button', text: excluded ? '対象外を解除' : '対象外にする' });
+      button.type = 'button';
+      button.setAttribute('aria-pressed', String(excluded));
+      button.addEventListener('click', function () { toggleExcluded(mode, group.category, section, button); });
+      header.appendChild(button);
+    }
+    section.appendChild(header);
+
+    var note = el('p', { className: 'category-excluded-note', text: 'このカテゴリーは対象外です（判定に含めません）' });
+    note.hidden = !excluded;
+    section.appendChild(note);
+
+    var list = el('ul', { className: 'item-list' });
+    group.items.forEach(function (item) { list.appendChild(buildItem(item)); });
+    section.appendChild(list);
+    return section;
+  }
+
+  /** チェック項目 1 行分の要素を作ります */
+  function buildItem(item) {
+    var li = el('li', { className: 'item' });
+    li.setAttribute('data-id', item.id);
+
+    // 左側：タップでチェック（問題なし）
+    var label = el('label', { className: 'item-main' });
+    var checkbox = el('input');
+    checkbox.type = 'checkbox';
+    checkbox.addEventListener('change', function () {
+      setStatus(item.id, checkbox.checked ? STATUS_OK : null);
+    });
+    var box = el('span', { className: 'item-box' });
+    box.setAttribute('aria-hidden', 'true');
+    var text = el('span', { className: 'item-text', text: item.name });
+    if (item.severity === 'critical') {
+      text.appendChild(el('span', { className: 'badge badge-critical', text: '重要' }));
+    }
+    label.appendChild(checkbox);
+    label.appendChild(box);
+    label.appendChild(text);
+
+    // 右側：「気になる」ボタン
+    var concern = el('button', { className: 'concern-button', text: '気になる' });
+    concern.type = 'button';
+    concern.addEventListener('click', function () {
+      setStatus(item.id, state.statuses[item.id] === STATUS_CONCERN ? null : STATUS_CONCERN);
+    });
+
+    li.appendChild(label);
+    li.appendChild(concern);
+    updateItemView(li, state.statuses[item.id]);
+    return li;
+  }
+
+  /**
+   * 項目の状態を変更します。
+   * @param {string} id
+   * @param {?string} status 'ok' | 'concern' | null（未確認に戻す）
+   */
+  function setStatus(id, status) {
+    if (status) {
+      state.statuses[id] = status;
+    } else {
+      delete state.statuses[id];
+    }
+    var li = document.querySelector('#check-categories .item[data-id="' + cssEscape(id) + '"]');
+    if (li) updateItemView(li, status);
+    updateProgress();
+  }
+
+  /** 項目 1 行の見た目を状態に合わせます */
+  function updateItemView(li, status) {
+    var checkbox = li.querySelector('input');
+    var box = li.querySelector('.item-box');
+    var concern = li.querySelector('.concern-button');
+
+    li.classList.toggle('is-ok', status === STATUS_OK);
+    li.classList.toggle('is-concern', status === STATUS_CONCERN);
+    checkbox.checked = (status === STATUS_OK);
+    box.textContent = status === STATUS_OK ? '✓' : (status === STATUS_CONCERN ? '!' : '');
+    concern.setAttribute('aria-pressed', String(status === STATUS_CONCERN));
+  }
+
+  /** カテゴリーの「対象外」を切り替えます */
+  function toggleExcluded(mode, category, section, button) {
+    var key = excludeKey(mode, category);
+    var excluded = !state.excluded[key];
+    if (excluded) {
+      state.excluded[key] = true;
+    } else {
+      delete state.excluded[key];
+    }
+    section.classList.toggle('is-excluded', excluded);
+    section.querySelector('.category-excluded-note').hidden = !excluded;
+    button.textContent = excluded ? '対象外を解除' : '対象外にする';
+    button.setAttribute('aria-pressed', String(excluded));
+    updateProgress();
+  }
+
+  /* ============================================================
+   * 進捗の計算と表示
+   * ============================================================ */
+
+  /**
+   * 進捗を計算します（対象外のカテゴリーは除く）。
+   * @return {{total:number, done:number, concern:number, percent:number}}
+   */
+  function computeProgress(mode, category) {
+    var result = { total: 0, done: 0, concern: 0, percent: 0 };
+    if (!state.data) return result;
+
+    itemsFor(mode).forEach(function (item) {
+      if (category && item.category !== category) return;
+      if (state.excluded[excludeKey(mode, item.category)]) return;
+      result.total++;
+      var s = state.statuses[item.id];
+      if (s) result.done++;
+      if (s === STATUS_CONCERN) result.concern++;
+    });
+    result.percent = result.total === 0 ? 0 : Math.round(result.done / result.total * 100);
+    return result;
+  }
+
+  /** 下部バーとカテゴリー見出しの進捗表示を更新します */
+  function updateProgress() {
+    var mode = state.mode;
+    var p = computeProgress(mode);
+
+    byId('bar-percent').textContent = p.percent + '%';
+    byId('bar-fill').style.width = p.percent + '%';
+    byId('bar-progress').setAttribute('aria-valuenow', String(p.percent));
+
+    var detail = byId('bar-detail');
+    detail.textContent = p.done + ' / ' + p.total + ' 項目' + (p.concern > 0 ? '・気になる ' + p.concern : '');
+    detail.classList.toggle('has-concern', p.concern > 0);
+
+    var sections = document.querySelectorAll('#check-categories .category');
+    for (var i = 0; i < sections.length; i++) {
+      var category = sections[i].getAttribute('data-category');
+      var cp = computeProgress(mode, category);
+      var excluded = !!state.excluded[excludeKey(mode, category)];
+      sections[i].querySelector('.category-count').textContent =
+        excluded ? '' : (cp.done + ' / ' + cp.total);
+    }
+  }
+
+  /* ============================================================
+   * お知らせ表示（トースト）
+   * ============================================================ */
+
+  /**
+   * 画面下部に短いメッセージを表示します。
+   * @param {string} message
+   * @param {boolean=} isError true ならワインレッドで表示（長めに表示）
+   */
+  function showToast(message, isError) {
+    var toast = byId('toast');
+    toast.textContent = message;
+    toast.classList.toggle('is-error', !!isError);
+    toast.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toast.hidden = true; }, isError ? 5000 : 3000);
+  }
+
+  /* ============================================================
+   * 小さな道具
+   * ============================================================ */
+
+  function byId(id) {
+    return document.getElementById(id);
+  }
+
+  /**
+   * 要素を作ります。文字は必ず textContent で入れます（XSS 対策）。
+   * @param {string} tag
+   * @param {{className?: string, text?: string}=} options
+   */
+  function el(tag, options) {
+    var node = document.createElement(tag);
+    if (options && options.className) node.className = options.className;
+    if (options && options.text != null) node.textContent = options.text;
+    return node;
+  }
+
+  /** querySelector で使うために特殊文字をエスケープします */
+  function cssEscape(value) {
+    return window.CSS && CSS.escape ? CSS.escape(value) : String(value).replace(/["\\]/g, '\\$&');
+  }
+
+  /** google.script.run の失敗内容を、表示用の文字列にします */
+  function errorMessage(error) {
+    if (!error) return '不明なエラー';
+    return error.message ? error.message : String(error);
+  }
+})();
+</script>

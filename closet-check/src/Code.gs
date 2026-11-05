@@ -377,3 +377,164 @@ function writeHeader_(sheet, headers) {
     .setFontColor(CONFIG.HEADER_FONT);
   sheet.setFrozenRows(1);
 }
+
+
+/* ============================================================
+ * 5. 画面の配信
+ * ============================================================ */
+
+/**
+ * Web アプリにアクセスしたときに画面（Index.html）を返します。
+ */
+function doGet() {
+  return HtmlService.createTemplateFromFile('Index')
+    .evaluate()
+    .setTitle('CLOSET CHECK')
+    // スマートフォンで正しい幅で表示するための設定（HTML 内の meta タグは GAS では無効なためここで指定）
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover');
+}
+
+/**
+ * 別ファイルの HTML（Style.html / JavaScript.html）を読み込みます。
+ * Index.html の中で <?!= include('Style'); ?> のように使います。
+ */
+function include(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
+
+
+/* ============================================================
+ * 6. 画面から呼び出す API（google.script.run）
+ * ============================================================ */
+
+/**
+ * アプリ起動時に必要なデータをまとめて返します。
+ * 店頭での通信回数を減らすため、起動時に 1 回だけ呼びます。
+ *
+ * @return {{appName: string, settings: Object, items: Object[], warnings: string[]}}
+ */
+function getInitialData() {
+  ensureSheets_();
+  const settings = readSettings_();
+  const checklist = readChecklist_();
+  return {
+    appName: settings.APP_NAME,
+    settings: settings,
+    items: checklist.items,
+    warnings: checklist.warnings
+  };
+}
+
+
+/* ============================================================
+ * 7. シートの読み込み
+ * ============================================================ */
+
+/**
+ * Settings シートを読み込み、{ キー: 値 } の形で返します。
+ * 値が空・不正な場合は DEFAULT_SETTINGS の初期値を使います。
+ */
+function readSettings_() {
+  // まず初期値を入れておく
+  const settings = {};
+  DEFAULT_SETTINGS.forEach(function (row) { settings[row[0]] = row[1]; });
+
+  const sheet = getSpreadsheet_().getSheetByName(CONFIG.SHEETS.SETTINGS.name);
+  const lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    sheet.getRange(2, 1, lastRow - 1, 2).getValues().forEach(function (row) {
+      const key = String(row[0]).trim();
+      if (!key || row[1] === '' || row[1] === null) return;
+      settings[key] = row[1];
+    });
+  }
+
+  // 数値として使う設定は数値に変換（変換できなければ初期値に戻す）
+  ['WARNING_SKIP_THRESHOLD', 'NORMAL_CONSIDER_THRESHOLD', 'MIN_PROGRESS_FOR_BUY', 'PRICE_MAX', 'HISTORY_LIMIT']
+    .forEach(function (key) {
+      const n = Number(settings[key]);
+      settings[key] = (isFinite(n) && n >= 0) ? n : defaultSetting_(key);
+    });
+
+  // カテゴリーの選択肢はカンマ区切り → 配列（全角カンマ・読点も区切りとして扱う）
+  const categories = String(settings.CATEGORY_OPTIONS).split(/[,、，]/)
+    .map(function (s) { return s.trim(); })
+    .filter(function (s) { return s !== ''; });
+  settings.CATEGORY_OPTIONS = categories.length > 0
+    ? categories
+    : String(defaultSetting_('CATEGORY_OPTIONS')).split(',');
+
+  settings.APP_NAME = String(settings.APP_NAME).trim() || defaultSetting_('APP_NAME');
+  return settings;
+}
+
+/** DEFAULT_SETTINGS から 1 つの初期値を取り出します */
+function defaultSetting_(key) {
+  const row = DEFAULT_SETTINGS.filter(function (r) { return r[0] === key; })[0];
+  return row ? row[1] : null;
+}
+
+/**
+ * Checklist シートから「有効（active=TRUE）」な項目を表示順で返します。
+ * 入力ミスのある行は読み飛ばし、warnings に理由を入れて返します
+ * （アプリが止まらないようにするため）。
+ *
+ * @return {{items: Object[], warnings: string[]}}
+ */
+function readChecklist_() {
+  const def = CONFIG.SHEETS.CHECKLIST;
+  const sheet = getSpreadsheet_().getSheetByName(def.name);
+  const lastRow = sheet.getLastRow();
+  const items = [];
+  const warnings = [];
+  if (lastRow < 2) {
+    return { items: items, warnings: ['Checklist にチェック項目がありません。setupSpreadsheet を実行してください。'] };
+  }
+
+  const col = indexMap_(def.headers);
+  const seenIds = {};
+  sheet.getRange(2, 1, lastRow - 1, def.headers.length).getValues().forEach(function (row, i) {
+    const rowNo = i + 2; // シート上の行番号（エラー表示用）
+    const id = String(row[col.item_id]).trim();
+    if (id === '') return; // 空行は無視
+
+    if (!isActive_(row[col.active])) return; // 無効な項目は表示しない
+
+    const targetType = String(row[col.target_type]).trim();
+    const severity = String(row[col.severity]).trim();
+    const name = String(row[col.item_name]).trim();
+    const category = String(row[col.category]).trim();
+
+    if (seenIds[id]) { warnings.push(rowNo + '行目：item_id「' + id + '」が重複しているため無視しました'); return; }
+    if (CONFIG.TARGET_TYPES.indexOf(targetType) === -1) { warnings.push(rowNo + '行目：target_type が不正です'); return; }
+    if (CONFIG.SEVERITIES.indexOf(severity) === -1) { warnings.push(rowNo + '行目：severity が不正です'); return; }
+    if (name === '' || category === '') { warnings.push(rowNo + '行目：category または item_name が空です'); return; }
+    seenIds[id] = true;
+
+    const order = Number(row[col.display_order]);
+    items.push({
+      id: id,
+      category: category,
+      name: name,
+      targetType: targetType,
+      severity: severity,
+      order: isFinite(order) && row[col.display_order] !== '' ? order : 999999
+    });
+  });
+
+  items.sort(function (a, b) { return a.order - b.order; });
+  return { items: items, warnings: warnings };
+}
+
+/** active 列の値を true / false に変換します（チェックボックス・文字列のどちらにも対応） */
+function isActive_(value) {
+  if (value === true) return true;
+  return String(value).trim().toUpperCase() === 'TRUE';
+}
+
+/** ['a','b'] → { a: 0, b: 1 } のように列名から列番号（0 始まり）を引けるようにします */
+function indexMap_(headers) {
+  const map = {};
+  headers.forEach(function (h, i) { map[h] = i; });
+  return map;
+}
