@@ -195,10 +195,57 @@
     </section>
 
     <!-- ============================================================
-         ⑥ 購入履歴画面（STEP 6 で実装）
+         ⑥ 購入履歴画面（一覧）
          ============================================================ -->
     <section id="screen-history" class="screen" hidden>
-      <p class="center-message">購入履歴は STEP 6 で実装します。</p>
+      <p id="history-message" class="center-message" hidden></p>
+      <div id="history-retry" class="center-message" hidden>
+        <button type="button" id="history-retry-button" class="button button-secondary">再読み込み</button>
+      </div>
+      <div id="history-empty" class="center-message" hidden>
+        <p>まだ保存された商品はありません。<br>チェックして保存すると、ここに表示されます。</p>
+        <button type="button" class="button button-primary" data-action="open-check" data-mode="vintage">チェックを始める</button>
+      </div>
+      <p id="history-count" class="screen-intro"></p>
+      <ul id="history-list" class="history-list"></ul>
+    </section>
+
+    <!-- 購入履歴の詳細 -->
+    <section id="screen-detail" class="screen" hidden>
+      <p id="detail-message" class="center-message" hidden></p>
+      <div id="detail-retry" class="center-message" hidden>
+        <button type="button" id="detail-retry-button" class="button button-secondary">再読み込み</button>
+      </div>
+
+      <div id="detail-body" hidden>
+        <div class="detail-head">
+          <h2 id="detail-name" class="detail-name"></h2>
+          <div class="detail-verdict">
+            <span id="detail-judgment" class="pill"></span>
+            <span id="detail-auto" class="detail-auto"></span>
+          </div>
+        </div>
+
+        <dl class="saved-summary detail-summary">
+          <dt>ブランド</dt><dd id="detail-brand"></dd>
+          <dt>カテゴリー</dt><dd id="detail-category"></dd>
+          <dt>古着 / 新品</dt><dd id="detail-condition"></dd>
+          <dt>価格</dt><dd id="detail-price"></dd>
+          <dt>チェック日時</dt><dd id="detail-date"></dd>
+        </dl>
+
+        <div id="detail-modes" class="mode-results"></div>
+
+        <h2 class="section-title">メモ</h2>
+        <p id="detail-memo" class="detail-memo"></p>
+
+        <h2 class="section-title">判定の理由</h2>
+        <ul id="detail-reasons" class="reason-list"></ul>
+
+        <h2 class="section-title">チェック結果</h2>
+        <p id="detail-json-error" class="notice" hidden>チェックの詳細を読み込めませんでした。スプレッドシートの checked_items_json 列が編集された可能性があります。</p>
+        <div id="detail-items"></div>
+      </div>
     </section>
 
     <!-- ============================================================

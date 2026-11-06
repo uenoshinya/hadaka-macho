@@ -37,6 +37,7 @@
     check: '',             // チェック画面はモードごとのタイトルを使う
     judge: '購入判定',
     product: '商品情報の入力',
+    detail: '購入履歴の詳細',
     saved: '保存完了',
     history: '購入履歴',
     guide: 'アプリの使い方'
@@ -60,6 +61,8 @@
     recordId: null,        // 保存用の記録 ID（同じチェックでは同じ ID を使い、二重保存を防ぐ）
     judgmentTouched: false,// 総合判定をユーザーが自分で選んだか
     isSaving: false,       // 保存中フラグ（保存ボタンの連打を防ぐ）
+    historyRequestId: 0,   // 古い履歴の読み込み結果を無視するための番号
+    detailRecordId: null,  // 表示中（読み込み中）の詳細の記録 ID
     guideImage: null, // NG例の見本画像（一度読み込んだら使い回す）
     guideImageLoading: false
   };
@@ -77,6 +80,8 @@
     byId('retry-button').addEventListener('click', loadInitialData);
     byId('judge-retry-button').addEventListener('click', runJudgment);
     byId('product-form').addEventListener('submit', onSaveSubmit);
+    byId('history-retry-button').addEventListener('click', loadHistory);
+    byId('detail-retry-button').addEventListener('click', function () { loadDetail(state.detailRecordId); });
     byId('product-form').addEventListener('input', onFormInput);
     byId('product-form').addEventListener('change', onFormInput);
     byId('viewer-close').addEventListener('click', closeViewer);
@@ -148,6 +153,10 @@
       showScreen('judge');
       return;
     }
+    if (state.screen === 'detail') {
+      showScreen('history'); // 一覧は読み込み済みのものをそのまま表示
+      return;
+    }
     if (state.screen === 'judge' && state.judgeFrom === 'check') {
       showScreen('check');
       return;
@@ -166,6 +175,11 @@
         break;
       case 'open-history':
         showScreen('history');
+        loadHistory();
+        break;
+      case 'open-detail':
+        showScreen('detail');
+        loadDetail(target.getAttribute('data-record-id'));
         break;
       case 'open-guide':
         showScreen('guide');
@@ -761,6 +775,195 @@
 
   function pad2(n) {
     return (n < 10 ? '0' : '') + n;
+  }
+
+  /* ============================================================
+   * 購入履歴（一覧・詳細）
+   * ============================================================ */
+
+  var STATUS_VIEW = {
+    ok: { mark: '✓', label: '問題なし', className: 'is-ok' },
+    concern: { mark: '!', label: '気になる', className: 'is-concern' },
+    unchecked: { mark: '–', label: '未確認', className: 'is-unchecked' }
+  };
+
+  /** 一覧・詳細で共通の「読み込み中／失敗」表示を切り替えます */
+  function setLoadState(prefix, message, showRetry) {
+    var messageEl = byId(prefix + '-message');
+    messageEl.textContent = message || '';
+    messageEl.hidden = !message;
+    byId(prefix + '-retry').hidden = !showRetry;
+  }
+
+  /** 購入履歴の一覧を読み込みます（開くたびに最新を取得） */
+  function loadHistory() {
+    var requestId = ++state.historyRequestId;
+    byId('history-list').textContent = '';
+    byId('history-count').textContent = '';
+    byId('history-empty').hidden = true;
+    setLoadState('history', '読み込み中…', false);
+
+    google.script.run
+      .withSuccessHandler(function (result) {
+        if (requestId !== state.historyRequestId) return;
+        setLoadState('history', '', false);
+        renderHistory(result);
+      })
+      .withFailureHandler(function (error) {
+        if (requestId !== state.historyRequestId) return;
+        setLoadState('history', '購入履歴を読み込めませんでした。\n（' + errorMessage(error) + '）', true);
+      })
+      .getHistory();
+  }
+
+  function renderHistory(result) {
+    var list = byId('history-list');
+    if (result.records.length === 0) {
+      byId('history-empty').hidden = false;
+      return;
+    }
+    byId('history-count').textContent = result.total > result.records.length
+      ? '全 ' + result.total + ' 件のうち、新しい ' + result.records.length + ' 件を表示しています'
+      : '全 ' + result.total + ' 件';
+
+    result.records.forEach(function (record) {
+      var li = el('li');
+      var button = el('button', { className: 'history-item' });
+      button.type = 'button';
+      button.setAttribute('data-action', 'open-detail');
+      button.setAttribute('data-record-id', record.recordId);
+
+      var top = el('span', { className: 'history-row' });
+      top.appendChild(el('span', { className: 'history-name', text: record.productName || '（商品名なし）' }));
+      top.appendChild(judgmentPill(record.judgment));
+      button.appendChild(top);
+
+      button.appendChild(el('span', {
+        className: 'history-sub',
+        text: [record.brand, record.category, record.conditionType].filter(Boolean).join('・')
+      }));
+
+      var bottom = el('span', { className: 'history-row' });
+      bottom.appendChild(el('span', { className: 'history-price', text: formatPrice(record.price) }));
+      bottom.appendChild(el('span', { className: 'history-date', text: record.createdAt }));
+      button.appendChild(bottom);
+
+      li.appendChild(button);
+      list.appendChild(li);
+    });
+  }
+
+  /** 1 件の詳細を読み込みます */
+  function loadDetail(recordId) {
+    state.detailRecordId = recordId;
+    byId('detail-body').hidden = true;
+    setLoadState('detail', '読み込み中…', false);
+
+    google.script.run
+      .withSuccessHandler(function (detail) {
+        if (state.detailRecordId !== recordId || state.screen !== 'detail') return;
+        setLoadState('detail', '', false);
+        renderDetail(detail);
+      })
+      .withFailureHandler(function (error) {
+        if (state.detailRecordId !== recordId || state.screen !== 'detail') return;
+        setLoadState('detail', '詳細を読み込めませんでした。\n（' + errorMessage(error) + '）', true);
+      })
+      .getRecordDetail(recordId);
+  }
+
+  function renderDetail(d) {
+    byId('detail-body').hidden = false;
+    byId('detail-name').textContent = d.productName || '（商品名なし）';
+
+    var pill = byId('detail-judgment');
+    pill.textContent = d.judgment;
+    pill.setAttribute('data-result', d.judgment);
+    byId('detail-auto').textContent = d.autoJudgment && d.autoJudgment !== d.judgment
+      ? '（アプリの参考判定：' + d.autoJudgment + '）' : '';
+
+    byId('detail-brand').textContent = d.brand || '—';
+    byId('detail-category').textContent = d.category || '—';
+    byId('detail-condition').textContent = d.conditionType || '—';
+    byId('detail-price').textContent = formatPrice(d.price);
+    byId('detail-date').textContent = d.createdAt;
+
+    // チェックごとの判定
+    var modeBox = byId('detail-modes');
+    modeBox.textContent = '';
+    [['vintage', d.conditionResult], ['fitting', d.fittingResult]].forEach(function (pair) {
+      var row = el('div', { className: 'mode-result is-static' });
+      row.appendChild(judgmentPill(pair[1]));
+      var body = el('span', { className: 'mode-result-body' });
+      body.appendChild(el('span', { className: 'mode-result-label', text: MODES[pair[0]].title }));
+      row.appendChild(body);
+      modeBox.appendChild(row);
+    });
+
+    // メモ
+    var memo = byId('detail-memo');
+    memo.textContent = d.memo || 'メモはありません';
+    memo.classList.toggle('is-empty', !d.memo);
+
+    // 判定の理由（保存時点のもの）
+    var reasons = byId('detail-reasons');
+    reasons.textContent = '';
+    if (d.reasons.length === 0) {
+      reasons.appendChild(el('li', { className: 'reason reason-none', text: d.jsonError ? '—' : '気になる点はありませんでした。' }));
+    }
+    d.reasons.forEach(function (reason) {
+      var level = ['critical', 'warning', 'normal', 'info'].indexOf(reason.level) !== -1 ? reason.level : 'info';
+      reasons.appendChild(el('li', { className: 'reason reason-' + level, text: String(reason.text) }));
+    });
+
+    byId('detail-json-error').hidden = !d.jsonError;
+    renderDetailItems(d.items);
+  }
+
+  /** チェック結果を「チェックの種類 → カテゴリー → 項目」の順に表示します */
+  function renderDetailItems(items) {
+    var box = byId('detail-items');
+    box.textContent = '';
+
+    Object.keys(MODES).forEach(function (mode) {
+      var modeItems = items.filter(function (item) { return item.mode === mode; });
+      if (modeItems.length === 0) return;
+      box.appendChild(el('h3', { className: 'detail-mode-title', text: MODES[mode].title }));
+
+      groupByCategory(modeItems).forEach(function (group) {
+        var excluded = group.items.every(function (item) { return item.status === 'excluded'; });
+        var heading = el('h4', { className: 'detail-category', text: group.category });
+        if (excluded) heading.appendChild(el('span', { className: 'detail-category-note', text: '（対象外）' }));
+        box.appendChild(heading);
+        if (excluded) return;
+
+        var list = el('ul', { className: 'detail-items' });
+        group.items.forEach(function (item) {
+          var view = STATUS_VIEW[item.status] || STATUS_VIEW.unchecked;
+          var li = el('li', { className: 'detail-item ' + view.className });
+          var box2 = el('span', { className: 'item-box', text: view.mark });
+          box2.setAttribute('aria-label', view.label);
+          li.appendChild(box2);
+          var text = el('span', { text: String(item.name) });
+          if (item.severity === 'critical') text.appendChild(el('span', { className: 'badge badge-critical', text: '重要' }));
+          li.appendChild(text);
+          list.appendChild(li);
+        });
+        box.appendChild(list);
+      });
+    });
+  }
+
+  /** 判定の丸いラベルを作ります */
+  function judgmentPill(result) {
+    var pill = el('span', { className: 'pill', text: result || '—' });
+    pill.setAttribute('data-result', result || '');
+    return pill;
+  }
+
+  /** 価格を「5,000 円」の形にします */
+  function formatPrice(price) {
+    return price === null || price === undefined ? '—' : Number(price).toLocaleString('ja-JP') + ' 円';
   }
 
   /* ============================================================

@@ -555,6 +555,97 @@ function evaluateCheck(payload) {
 }
 
 /**
+ * 購入履歴の一覧を新しい順に返します（最大 HISTORY_LIMIT 件）。
+ * 一覧に必要な列だけを返し、通信量を抑えます。
+ *
+ * @return {{records: Object[], total: number}}
+ */
+function getHistory() {
+  ensureSheets_();
+  const settings = readSettings_();
+  const sheet = getSpreadsheet_().getSheetByName(CONFIG.SHEETS.HISTORY.name);
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { records: [], total: 0 };
+
+  const col = indexMap_(CONFIG.SHEETS.HISTORY.headers);
+  // checked_items_json（最後の列）は大きいので読まない
+  const width = col.memo + 1;
+  const rows = sheet.getRange(2, 1, lastRow - 1, width).getValues()
+    .filter(function (row) { return String(row[col.record_id]).trim() !== ''; });
+
+  const records = [];
+  for (let i = rows.length - 1; i >= 0 && records.length < settings.HISTORY_LIMIT; i--) {
+    const row = rows[i];
+    records.push({
+      recordId: String(row[col.record_id]),
+      createdAt: formatDate_(row[col.created_at]),
+      productName: String(row[col.product_name]),
+      brand: String(row[col.brand]),
+      category: String(row[col.category]),
+      conditionType: String(row[col.condition_type]),
+      price: toNumberOrNull_(row[col.price]),
+      judgment: String(row[col.judgment])
+    });
+  }
+  return { records: records, total: rows.length };
+}
+
+/**
+ * 1 件の記録の詳細（チェック結果を含む）を返します。
+ *
+ * @param {string} recordId
+ * @return {Object}
+ */
+function getRecordDetail(recordId) {
+  const id = String(recordId || '').trim();
+  if (id === '' || id.length > 50) {
+    throw new Error('記録 ID が不正です。');
+  }
+  ensureSheets_();
+  const sheet = getSpreadsheet_().getSheetByName(CONFIG.SHEETS.HISTORY.name);
+  const row = findHistoryRow_(sheet, id);
+  if (!row) {
+    throw new Error('この記録は見つかりませんでした。スプレッドシートから削除された可能性があります。');
+  }
+  const col = indexMap_(CONFIG.SHEETS.HISTORY.headers);
+
+  // チェック詳細（JSON）を読み込む。シートを手で編集して壊れていても、基本情報は表示できるようにする
+  let detail = {};
+  let jsonError = false;
+  try {
+    detail = JSON.parse(String(row[col.checked_items_json] || '{}')) || {};
+  } catch (e) {
+    jsonError = true;
+  }
+
+  return {
+    recordId: id,
+    createdAt: formatDate_(row[col.created_at]),
+    productName: String(row[col.product_name]),
+    brand: String(row[col.brand]),
+    category: String(row[col.category]),
+    conditionType: String(row[col.condition_type]),
+    price: toNumberOrNull_(row[col.price]),
+    conditionResult: String(row[col.condition_result]),
+    fittingResult: String(row[col.fitting_result]),
+    judgment: String(row[col.judgment]),
+    memo: String(row[col.memo]),
+    autoJudgment: detail.auto_judgment ? String(detail.auto_judgment) : '',
+    reasons: Array.isArray(detail.reasons) ? detail.reasons : [],
+    excludedCategories: Array.isArray(detail.excluded_categories) ? detail.excluded_categories : [],
+    items: Array.isArray(detail.items) ? detail.items : [],
+    jsonError: jsonError
+  };
+}
+
+/** 数値に変換します（空や数値でなければ null） */
+function toNumberOrNull_(value) {
+  if (value === '' || value === null) return null;
+  const n = Number(value);
+  return isFinite(n) ? n : null;
+}
+
+/**
  * NG例の見本画像を読み込み、画面にそのまま表示できる形（data URL）で返します。
  * 画像は「NG例を見る」を押したときにだけ読み込むので、アプリの起動は遅くなりません。
  *
