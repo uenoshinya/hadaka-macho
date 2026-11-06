@@ -74,6 +74,7 @@
          ============================================================ -->
     <section id="screen-check" class="screen screen-with-bar" hidden>
       <p id="check-intro" class="screen-intro"></p>
+      <button type="button" id="guide-image-button" class="button button-secondary button-block guide-image-button" data-action="open-guide-image" hidden>NG例の見本を見る</button>
       <ul class="legend">
         <li><span class="legend-box legend-ok">✓</span>問題なし</li>
         <li><span class="legend-box legend-concern">!</span>気になる</li>
@@ -115,6 +116,7 @@
           <li><span class="legend-box legend-ok">✓</span>問題がなければ、項目をタップしてチェック</li>
           <li><span class="legend-box legend-concern">!</span>問題を見つけたら「気になる」をタップ</li>
           <li>分からない・見ていない項目は、そのままで構いません（未確認）</li>
+          <li>判断に迷ったら、チェック画面上部の「NG例の見本を見る」で写真の例を確認できます</li>
         </ul>
 
         <h2 class="section-title">判定について</h2>
@@ -136,6 +138,20 @@
       </div>
     </div>
     <button type="button" class="button button-primary" data-action="open-judge">判定へ進む</button>
+  </div>
+
+  <!-- NG例の見本画像ビューアー（「NG例の見本を見る」で開く） -->
+  <div id="image-viewer" class="viewer" role="dialog" aria-modal="true" aria-labelledby="viewer-title" hidden>
+    <div class="viewer-bar">
+      <h2 id="viewer-title" class="viewer-title">NG例の見本</h2>
+      <button type="button" id="viewer-zoom" class="viewer-button" aria-pressed="false">拡大</button>
+      <button type="button" id="viewer-close" class="viewer-button viewer-close">閉じる ✕</button>
+    </div>
+    <p class="viewer-hint">横にスクロールすると、もう一方のチェックリストも見られます</p>
+    <div id="viewer-scroll" class="viewer-scroll">
+      <p id="viewer-message" class="viewer-message"></p>
+      <img id="viewer-image" class="viewer-image" alt="古着の状態と試着のフィット感のNG例をまとめた見本画像" hidden>
+    </div>
   </div>
 
   <!-- 成功・失敗のお知らせ表示 -->

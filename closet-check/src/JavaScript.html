@@ -51,8 +51,12 @@
     statuses: {},     // { item_id: 'ok' | 'concern' }  ※未確認は登録しない
     excluded: {},     // { 'fitting|C. パンツのサイズ感': true }  対象外のカテゴリー
     screen: 'loading',
-    mode: null        // 'vintage' | 'fitting'
+    mode: null,       // 'vintage' | 'fitting'
+    guideImage: null, // NG例の見本画像（一度読み込んだら使い回す）
+    guideImageLoading: false
   };
+
+  var viewerReturnFocus = null; // ビューアーを閉じたときにフォーカスを戻す要素
 
   var toastTimer = null;
 
@@ -63,6 +67,11 @@
     document.addEventListener('click', onDocumentClick);
     byId('back-button').addEventListener('click', goBack);
     byId('retry-button').addEventListener('click', loadInitialData);
+    byId('viewer-close').addEventListener('click', closeViewer);
+    byId('viewer-zoom').addEventListener('click', toggleViewerZoom);
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' && !byId('image-viewer').hidden) closeViewer();
+    });
     loadInitialData();
   });
 
@@ -147,6 +156,9 @@
       case 'reset-check':
         resetCheck();
         break;
+      case 'open-guide-image':
+        openViewer();
+        break;
     }
   }
 
@@ -212,6 +224,7 @@
   /** チェック画面を作り直します */
   function renderCheck(mode) {
     byId('check-intro').textContent = MODES[mode].intro;
+    byId('guide-image-button').hidden = !state.data.hasGuideImage;
 
     var container = byId('check-categories');
     container.textContent = ''; // 中身を空にする
@@ -378,6 +391,91 @@
       sections[i].querySelector('.category-count').textContent =
         excluded ? '' : (cp.done + ' / ' + cp.total);
     }
+  }
+
+  /* ============================================================
+   * NG例の見本ビューアー
+   *   画像は 1 枚（左半分：古着の状態／右半分：試着）。
+   *   スマホでは今のチェック画面に合う半分を画面幅に合わせて表示し、
+   *   横スクロールでもう半分、「拡大」で文字を読める大きさにできます。
+   * ============================================================ */
+
+  function openViewer() {
+    viewerReturnFocus = document.activeElement;
+    byId('image-viewer').classList.remove('is-zoomed');
+    byId('viewer-zoom').setAttribute('aria-pressed', 'false');
+    byId('viewer-zoom').textContent = '拡大';
+    byId('image-viewer').hidden = false;
+    document.body.classList.add('is-viewer-open');
+    byId('viewer-close').focus();
+
+    if (state.guideImage) {
+      showViewerImage();
+      return;
+    }
+    loadGuideImage();
+  }
+
+  /** サーバーから見本画像を読み込みます（初回のみ） */
+  function loadGuideImage() {
+    if (state.guideImageLoading) return;
+    state.guideImageLoading = true;
+    byId('viewer-image').hidden = true;
+    byId('viewer-message').textContent = '画像を読み込み中…';
+
+    google.script.run
+      .withSuccessHandler(function (dataUrl) {
+        state.guideImageLoading = false;
+        state.guideImage = dataUrl;
+        if (!byId('image-viewer').hidden) showViewerImage();
+      })
+      .withFailureHandler(function (error) {
+        state.guideImageLoading = false;
+        byId('viewer-message').textContent =
+          '画像を読み込めませんでした。\n' + errorMessage(error) + '\n\n閉じてから、もう一度お試しください。';
+      })
+      .getGuideImage();
+  }
+
+  /** 画像を表示し、今のチェック画面に合う側へスクロールします */
+  function showViewerImage() {
+    var img = byId('viewer-image');
+    byId('viewer-message').textContent = '';
+    img.hidden = false;
+
+    var scrollToSide = function () {
+      var box = byId('viewer-scroll');
+      box.scrollTop = 0;
+      // 試着チェック画面なら右半分、それ以外は左半分から表示
+      box.scrollLeft = state.screen === 'check' && state.mode === 'fitting' ? box.scrollWidth : 0;
+    };
+    if (img.getAttribute('src') === state.guideImage && img.complete) {
+      scrollToSide();
+    } else {
+      img.onload = scrollToSide;
+      img.src = state.guideImage; // data URL なので HTML として解釈されることはない
+    }
+  }
+
+  /** 「拡大」ボタン：表示中の場所を中心にしたまま、2 倍に拡大・縮小します */
+  function toggleViewerZoom() {
+    var viewer = byId('image-viewer');
+    var box = byId('viewer-scroll');
+    var centerX = (box.scrollLeft + box.clientWidth / 2) / box.scrollWidth;
+    var centerY = (box.scrollTop + box.clientHeight / 2) / box.scrollHeight;
+
+    var zoomed = viewer.classList.toggle('is-zoomed');
+    byId('viewer-zoom').setAttribute('aria-pressed', String(zoomed));
+    byId('viewer-zoom').textContent = zoomed ? '縮小' : '拡大';
+
+    box.scrollLeft = centerX * box.scrollWidth - box.clientWidth / 2;
+    box.scrollTop = centerY * box.scrollHeight - box.clientHeight / 2;
+  }
+
+  function closeViewer() {
+    byId('image-viewer').hidden = true;
+    document.body.classList.remove('is-viewer-open');
+    if (viewerReturnFocus && viewerReturnFocus.focus) viewerReturnFocus.focus();
   }
 
   /* ============================================================

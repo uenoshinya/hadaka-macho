@@ -61,6 +61,9 @@ const CONFIG = {
   // 古着 / 新品 の表記
   CONDITION_TYPES: ['古着', '新品'],
 
+  // NG例の見本画像の上限サイズ（バイト）。大きすぎると店頭で表示に時間がかかるため
+  GUIDE_IMAGE_MAX_BYTES: 5 * 1024 * 1024,
+
   // ヘッダー行の見た目（アプリと同じネイビー）
   HEADER_BG: '#1B2A41',
   HEADER_FONT: '#FFFFFF'
@@ -145,7 +148,8 @@ const DEFAULT_SETTINGS = [
   ['NORMAL_CONSIDER_THRESHOLD', 3, 'normal 項目の「気になる」がこの数以上で「要検討」'],
   ['MIN_PROGRESS_FOR_BUY', 0.8, '「買い」と判定するのに必要な最低進捗率（0〜1）'],
   ['PRICE_MAX', 10000000, '入力できる価格の上限（円）'],
-  ['HISTORY_LIMIT', 100, '購入履歴に表示する最大件数']
+  ['HISTORY_LIMIT', 100, '購入履歴に表示する最大件数'],
+  ['GUIDE_IMAGE_FILE_ID', '', 'NG例の見本画像（Googleドライブ）のファイル ID または共有 URL。空なら表示しない']
 ];
 
 
@@ -421,8 +425,56 @@ function getInitialData() {
     appName: settings.APP_NAME,
     settings: settings,
     items: checklist.items,
-    warnings: checklist.warnings
+    warnings: checklist.warnings,
+    hasGuideImage: settings.GUIDE_IMAGE_FILE_ID !== ''
   };
+}
+
+/**
+ * NG例の見本画像を読み込み、画面にそのまま表示できる形（data URL）で返します。
+ * 画像は「NG例を見る」を押したときにだけ読み込むので、アプリの起動は遅くなりません。
+ *
+ * 画像は Googleドライブに置き、Settings シートの GUIDE_IMAGE_FILE_ID に
+ * ファイル ID か共有 URL を書いてください（共有設定は「自分のみ」のままで OK）。
+ *
+ * @return {string} 'data:image/...;base64,...'
+ */
+function getGuideImage() {
+  const raw = readSettings_().GUIDE_IMAGE_FILE_ID;
+  const fileId = extractDriveFileId_(raw);
+  if (!fileId) {
+    throw new Error('Settings シートの GUIDE_IMAGE_FILE_ID に画像のファイル ID が設定されていません。');
+  }
+
+  let blob;
+  try {
+    blob = DriveApp.getFileById(fileId).getBlob();
+  } catch (e) {
+    throw new Error('見本画像が見つかりません。GUIDE_IMAGE_FILE_ID が正しいか、ファイルがゴミ箱に入っていないか確認してください。');
+  }
+
+  const mimeType = blob.getContentType();
+  if (!mimeType || mimeType.indexOf('image/') !== 0) {
+    throw new Error('GUIDE_IMAGE_FILE_ID のファイルが画像ではありません（' + mimeType + '）。');
+  }
+  const bytes = blob.getBytes();
+  if (bytes.length > CONFIG.GUIDE_IMAGE_MAX_BYTES) {
+    throw new Error('見本画像が大きすぎます（' + Math.round(bytes.length / 1024) + 'KB）。' +
+      Math.round(CONFIG.GUIDE_IMAGE_MAX_BYTES / 1024 / 1024) + 'MB 以下にしてください。');
+  }
+  return 'data:' + mimeType + ';base64,' + Utilities.base64Encode(bytes);
+}
+
+/**
+ * ファイル ID または共有 URL から、ドライブのファイル ID だけを取り出します。
+ *   例）https://drive.google.com/file/d/【ID】/view?usp=sharing → 【ID】
+ *       https://drive.google.com/open?id=【ID】               → 【ID】
+ * @return {string} ID（取り出せなければ空文字）
+ */
+function extractDriveFileId_(value) {
+  const text = String(value || '').trim();
+  const match = text.match(/\/d\/([\w-]{20,})/) || text.match(/[?&]id=([\w-]{20,})/) || text.match(/^([\w-]{20,})$/);
+  return match ? match[1] : '';
 }
 
 
@@ -465,6 +517,7 @@ function readSettings_() {
     : String(defaultSetting_('CATEGORY_OPTIONS')).split(',');
 
   settings.APP_NAME = String(settings.APP_NAME).trim() || defaultSetting_('APP_NAME');
+  settings.GUIDE_IMAGE_FILE_ID = String(settings.GUIDE_IMAGE_FILE_ID || '').trim();
   return settings;
 }
 
