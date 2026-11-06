@@ -52,6 +52,9 @@
     excluded: {},     // { 'fitting|C. パンツのサイズ感': true }  対象外のカテゴリー
     screen: 'loading',
     mode: null,       // 'vintage' | 'fitting'
+    judgeFrom: 'home',     // 判定画面の「戻る」で戻る先（'home' か 'check'）
+    judgment: null,        // 最後に受け取った判定結果（STEP 5 の保存で使う）
+    judgeRequestId: 0,     // 古い判定結果を無視するための番号
     guideImage: null, // NG例の見本画像（一度読み込んだら使い回す）
     guideImageLoading: false
   };
@@ -67,6 +70,7 @@
     document.addEventListener('click', onDocumentClick);
     byId('back-button').addEventListener('click', goBack);
     byId('retry-button').addEventListener('click', loadInitialData);
+    byId('judge-retry-button').addEventListener('click', runJudgment);
     byId('viewer-close').addEventListener('click', closeViewer);
     byId('viewer-zoom').addEventListener('click', toggleViewerZoom);
     document.addEventListener('keydown', function (event) {
@@ -129,8 +133,12 @@
     window.scrollTo(0, 0);
   }
 
-  /** ヘッダーの「戻る」ボタン */
+  /** ヘッダーの「戻る」ボタン（判定画面からは、来たチェック画面に戻る） */
   function goBack() {
+    if (state.screen === 'judge' && state.judgeFrom === 'check') {
+      showScreen('check');
+      return;
+    }
     showScreen('home');
   }
 
@@ -150,8 +158,14 @@
         showScreen('guide');
         break;
       case 'open-judge':
-        // STEP 4 で判定画面を実装します
-        showToast('判定機能は STEP 4 で実装します');
+        openJudge();
+        break;
+      case 'back-to-check':
+        showScreen('check', state.judgeFrom === 'check' ? state.mode : firstPerformedMode());
+        break;
+      case 'open-product':
+        // STEP 5 で商品情報の入力画面を実装します
+        showToast('商品情報の保存は STEP 5 で実装します');
         break;
       case 'reset-check':
         resetCheck();
@@ -391,6 +405,111 @@
       sections[i].querySelector('.category-count').textContent =
         excluded ? '' : (cp.done + ' / ' + cp.total);
     }
+  }
+
+  /* ============================================================
+   * 購入判定画面
+   *   判定の計算はサーバー（Code.gs の judgeChecks_）だけで行います。
+   *   画面側と二重に持たないことで、ルールの食い違いを防ぎます。
+   * ============================================================ */
+
+  var VERDICTS = {
+    '買い': { en: 'BUY', message: '状態・サイズに大きな問題は見つかりませんでした。' },
+    '要検討': { en: 'CONSIDER', message: '気になる点があります。理由を確認して、納得できるか考えましょう。' },
+    '見送り': { en: 'PASS', message: '重大な問題が見つかりました。購入は慎重に判断しましょう。' }
+  };
+
+  /** 判定画面を開きます */
+  function openJudge() {
+    if (Object.keys(state.statuses).length === 0) {
+      showToast('まだチェックした項目がありません。先にチェックを行ってください。', true);
+      return;
+    }
+    state.judgeFrom = state.screen === 'check' ? 'check' : 'home';
+    showScreen('judge');
+    runJudgment();
+  }
+
+  /** サーバーに判定を依頼します */
+  function runJudgment() {
+    var requestId = ++state.judgeRequestId;
+    byId('judge-result').hidden = true;
+    byId('judge-retry').hidden = true;
+    byId('judge-message').hidden = false;
+    byId('judge-message').textContent = '判定中…';
+
+    google.script.run
+      .withSuccessHandler(function (result) {
+        // 判定中に別の画面へ移った・再判定した場合は、古い結果を表示しない
+        if (requestId !== state.judgeRequestId || state.screen !== 'judge') return;
+        state.judgment = result;
+        renderJudgment(result);
+      })
+      .withFailureHandler(function (error) {
+        if (requestId !== state.judgeRequestId || state.screen !== 'judge') return;
+        byId('judge-message').textContent =
+          '判定できませんでした。通信環境を確認して、もう一度お試しください。\n（' + errorMessage(error) + '）';
+        byId('judge-retry').hidden = false;
+      })
+      .evaluateCheck({ statuses: state.statuses, excluded: Object.keys(state.excluded) });
+  }
+
+  /** 判定結果を表示します */
+  function renderJudgment(result) {
+    byId('judge-message').hidden = true;
+    byId('judge-result').hidden = false;
+
+    // 総合判定
+    var verdict = VERDICTS[result.overall] || { en: '', message: 'チェックした項目がありません。' };
+    byId('verdict').setAttribute('data-result', result.overall);
+    byId('verdict-text').textContent = result.overall;
+    byId('verdict-en').textContent = verdict.en;
+    byId('verdict-message').textContent = verdict.message;
+
+    // チェックごとの判定
+    var modeBox = byId('mode-results');
+    modeBox.textContent = '';
+    Object.keys(MODES).forEach(function (mode) {
+      var m = result.modes[mode];
+      var row = el('button', { className: 'mode-result' });
+      row.type = 'button';
+      row.setAttribute('data-action', 'open-check');
+      row.setAttribute('data-mode', mode);
+
+      var pill = el('span', { className: 'pill', text: m.result });
+      pill.setAttribute('data-result', m.result);
+      var body = el('span', { className: 'mode-result-body' });
+      body.appendChild(el('span', { className: 'mode-result-label', text: MODES[mode].title }));
+      body.appendChild(el('span', {
+        className: 'mode-result-detail',
+        text: m.done === 0
+          ? 'まだチェックしていません'
+          : '確認 ' + m.done + ' / ' + m.total + ' 項目・気になる ' + m.concernCount + ' 件'
+      }));
+      row.appendChild(pill);
+      row.appendChild(body);
+      row.appendChild(el('span', { className: 'mode-result-arrow', text: '›' }));
+      modeBox.appendChild(row);
+    });
+
+    // 判定の理由
+    var list = byId('reason-list');
+    list.textContent = '';
+    if (result.reasons.length === 0) {
+      list.appendChild(el('li', { className: 'reason reason-none', text: '気になる点は見つかりませんでした。' }));
+    }
+    result.reasons.forEach(function (reason) {
+      list.appendChild(el('li', { className: 'reason reason-' + reason.level, text: reason.text }));
+    });
+  }
+
+  /** チェック済みの項目がある最初のチェック画面（判定画面から戻るとき用） */
+  function firstPerformedMode() {
+    var modes = Object.keys(MODES);
+    for (var i = 0; i < modes.length; i++) {
+      if (computeProgress(modes[i]).done > 0) return modes[i];
+    }
+    return modes[0];
   }
 
   /* ============================================================

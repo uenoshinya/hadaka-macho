@@ -85,10 +85,36 @@
     </section>
 
     <!-- ============================================================
-         ④ 購入判定画面（STEP 4 で実装）
+         ④ 購入判定画面
          ============================================================ -->
     <section id="screen-judge" class="screen" hidden>
-      <p class="center-message">判定機能は STEP 4 で実装します。</p>
+      <p id="judge-message" class="center-message">判定中…</p>
+      <div id="judge-retry" class="center-message" hidden>
+        <button type="button" id="judge-retry-button" class="button button-secondary">もう一度判定する</button>
+      </div>
+
+      <div id="judge-result" hidden>
+        <!-- 総合判定（買い / 要検討 / 見送り） -->
+        <div id="verdict" class="verdict">
+          <span class="verdict-caption">参考判定</span>
+          <span id="verdict-text" class="verdict-text"></span>
+          <span id="verdict-en" class="verdict-en"></span>
+          <p id="verdict-message" class="verdict-message"></p>
+        </div>
+
+        <!-- チェックごとの判定（タップでそのチェックに戻れる） -->
+        <div id="mode-results" class="mode-results"></div>
+
+        <h2 class="section-title">判定の理由</h2>
+        <ul id="reason-list" class="reason-list"></ul>
+
+        <p class="notice">この判定は参考情報です。最終的な購入の判断は、ご自身で行ってください。</p>
+
+        <div class="judge-actions">
+          <button type="button" class="button button-primary button-block" data-action="open-product">商品情報を入力して保存</button>
+          <button type="button" class="button button-secondary button-block" data-action="back-to-check">チェックに戻る</button>
+        </div>
+      </div>
     </section>
 
     <!-- ============================================================

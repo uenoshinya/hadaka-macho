@@ -54,9 +54,20 @@ const CONFIG = {
   TARGET_TYPES: ['vintage', 'fitting', 'both'],
   SEVERITIES: ['normal', 'warning', 'critical'],
 
-  // 判定の表記
+  // 判定の表記（左から良い順。総合判定は「悪い方」を採用する）
   JUDGMENTS: ['買い', '要検討', '見送り'],
   NOT_PERFORMED: '未実施',
+
+  // チェックの種類と、それぞれに含める Checklist の target_type
+  //   vintage = 古着の状態（condition_result）／ fitting = 試着（fitting_result）
+  MODES: {
+    vintage: { label: '古着の状態', targets: ['vintage', 'both'] },
+    fitting: { label: '試着・フィット感', targets: ['fitting', 'both'] }
+  },
+
+  // チェック項目の状態
+  STATUS_OK: 'ok',            // 問題なし
+  STATUS_CONCERN: 'concern',  // 気になる
 
   // 古着 / 新品 の表記
   CONDITION_TYPES: ['古着', '新品'],
@@ -431,6 +442,20 @@ function getInitialData() {
 }
 
 /**
+ * チェック結果から購入判定を計算して返します（判定画面を開くときに呼ぶ）。
+ *
+ * @param {{statuses: Object, excluded: string[]}} payload
+ *   statuses … { item_id: 'ok' | 'concern' }（未確認の項目は含めない）
+ *   excluded … 対象外にしたカテゴリー（'fitting|C. パンツのサイズ感' の形）
+ * @return {Object} judgeChecks_() の結果
+ */
+function evaluateCheck(payload) {
+  ensureSheets_();
+  const input = validateCheckPayload_(payload);
+  return judgeChecks_(input.statuses, input.excluded, readChecklist_().items, readSettings_());
+}
+
+/**
  * NG例の見本画像を読み込み、画面にそのまま表示できる形（data URL）で返します。
  * 画像は「NG例を見る」を押したときにだけ読み込むので、アプリの起動は遅くなりません。
  *
@@ -590,4 +615,168 @@ function indexMap_(headers) {
   const map = {};
   headers.forEach(function (h, i) { map[h] = i; });
   return map;
+}
+
+
+/* ============================================================
+ * 8. 購入判定
+ *    判定ルール（上から順に当てはめ、最初に当たったものが結果）
+ *      1. critical の「気になる」が 1 つ以上             → 見送り
+ *      2. warning の「気になる」が WARNING_SKIP_THRESHOLD 以上 → 見送り
+ *      3. warning の「気になる」が 1 つ以上              → 要検討
+ *      4. normal の「気になる」が NORMAL_CONSIDER_THRESHOLD 以上 → 要検討
+ *      5. critical の項目に未確認が残っている            → 要検討
+ *      6. 進捗率が MIN_PROGRESS_FOR_BUY 未満              → 要検討
+ *      7. どれにも当たらない                              → 買い
+ *    チェック数の多さではなく、問題の「重大さ」を優先しています。
+ *    古着の状態・試着をそれぞれ判定し、悪い方を総合判定にします。
+ * ============================================================ */
+
+/**
+ * 購入判定の本体（シートを読まない純粋な計算なので、保存時にも使い回します）。
+ *
+ * @param {Object} statuses  { item_id: 'ok' | 'concern' }
+ * @param {Object} excluded  { 'fitting|カテゴリー名': true }
+ * @param {Object[]} items   readChecklist_() の items
+ * @param {Object} settings  readSettings_() の結果
+ * @return {{overall: string, modes: Object, reasons: Object[]}}
+ *   overall … '買い' | '要検討' | '見送り' | '未実施'
+ *   modes   … { vintage: {...}, fitting: {...} } モードごとの集計と判定
+ *   reasons … [{ level: 'critical'|'warning'|'normal'|'info', mode, text }] 判定理由（重い順）
+ */
+function judgeChecks_(statuses, excluded, items, settings) {
+  const modes = {};
+  let reasons = [];
+
+  Object.keys(CONFIG.MODES).forEach(function (mode) {
+    const r = judgeMode_(mode, statuses, excluded, items, settings);
+    modes[mode] = r.summary;
+    reasons = reasons.concat(r.reasons);
+  });
+
+  // 総合判定 = 実施したチェックのうち、いちばん悪い判定
+  let worst = -1;
+  Object.keys(modes).forEach(function (mode) {
+    worst = Math.max(worst, CONFIG.JUDGMENTS.indexOf(modes[mode].result)); // 未実施は -1
+  });
+
+  // 理由は重い順に並べる
+  const levelOrder = { critical: 0, warning: 1, normal: 2, info: 3 };
+  reasons.sort(function (a, b) { return levelOrder[a.level] - levelOrder[b.level]; });
+
+  return {
+    overall: worst === -1 ? CONFIG.NOT_PERFORMED : CONFIG.JUDGMENTS[worst],
+    modes: modes,
+    reasons: reasons
+  };
+}
+
+/** 1 種類のチェック（古着の状態 または 試着）を判定します */
+function judgeMode_(mode, statuses, excluded, items, settings) {
+  const def = CONFIG.MODES[mode];
+  const label = def.label;
+  const targets = items.filter(function (item) {
+    return def.targets.indexOf(item.targetType) !== -1 && !excluded[mode + '|' + item.category];
+  });
+
+  // 集計
+  const concerns = { critical: [], warning: [], normal: [] };
+  const uncheckedCritical = [];
+  let done = 0;
+  targets.forEach(function (item) {
+    const status = statuses[item.id];
+    if (status === CONFIG.STATUS_OK || status === CONFIG.STATUS_CONCERN) done++;
+    if (status === CONFIG.STATUS_CONCERN) concerns[item.severity].push(item.name);
+    if (!status && item.severity === 'critical') uncheckedCritical.push(item.name);
+  });
+  const total = targets.length;
+  const progress = total === 0 ? 0 : done / total;
+
+  const summary = {
+    label: label,
+    result: CONFIG.NOT_PERFORMED,
+    total: total,
+    done: done,
+    progress: progress,
+    concernCount: concerns.critical.length + concerns.warning.length + concerns.normal.length,
+    criticalCount: concerns.critical.length,
+    warningCount: concerns.warning.length,
+    normalCount: concerns.normal.length
+  };
+
+  // 1 つもチェックしていなければ「未実施」（判定に含めない）
+  if (done === 0) {
+    return { summary: summary, reasons: [] };
+  }
+
+  // 判定理由（画面に表示する）
+  const reasons = [];
+  concerns.critical.forEach(function (name) {
+    reasons.push({ level: 'critical', mode: mode, text: '【' + label + '】重大：' + name });
+  });
+  concerns.warning.forEach(function (name) {
+    reasons.push({ level: 'warning', mode: mode, text: '【' + label + '】注意：' + name });
+  });
+  concerns.normal.forEach(function (name) {
+    reasons.push({ level: 'normal', mode: mode, text: '【' + label + '】軽微：' + name });
+  });
+  if (uncheckedCritical.length > 0) {
+    reasons.push({
+      level: 'info', mode: mode,
+      text: '【' + label + '】重要な項目が未確認です：' + uncheckedCritical.join('／')
+    });
+  }
+  if (progress < settings.MIN_PROGRESS_FOR_BUY) {
+    reasons.push({
+      level: 'info', mode: mode,
+      text: '【' + label + '】確認できた項目が ' + Math.round(progress * 100) + '%（' + done + ' / ' + total +
+        '）です。「買い」には ' + Math.round(settings.MIN_PROGRESS_FOR_BUY * 100) + '% 以上の確認が必要です'
+    });
+  }
+
+  // 判定ルールを上から順に当てはめる
+  let result;
+  if (concerns.critical.length >= 1) {
+    result = '見送り';
+  } else if (concerns.warning.length >= settings.WARNING_SKIP_THRESHOLD) {
+    result = '見送り';
+  } else if (concerns.warning.length >= 1) {
+    result = '要検討';
+  } else if (concerns.normal.length >= settings.NORMAL_CONSIDER_THRESHOLD) {
+    result = '要検討';
+  } else if (uncheckedCritical.length > 0) {
+    result = '要検討';
+  } else if (progress < settings.MIN_PROGRESS_FOR_BUY) {
+    result = '要検討';
+  } else {
+    result = '買い';
+  }
+  summary.result = result;
+
+  return { summary: summary, reasons: reasons };
+}
+
+/**
+ * 画面から送られたチェック結果の形を確認し、安全な形に整えます。
+ * 想定外の値は使わずに捨てます（画面側の不具合や改ざんへの備え）。
+ * @return {{statuses: Object, excluded: Object}}
+ */
+function validateCheckPayload_(payload) {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('チェック結果が受け取れませんでした。画面を再読み込みしてください。');
+  }
+  const statuses = {};
+  const rawStatuses = payload.statuses && typeof payload.statuses === 'object' ? payload.statuses : {};
+  Object.keys(rawStatuses).slice(0, 1000).forEach(function (id) {
+    const value = rawStatuses[id];
+    if (id.length <= 50 && (value === CONFIG.STATUS_OK || value === CONFIG.STATUS_CONCERN)) {
+      statuses[id] = value;
+    }
+  });
+
+  const excluded = {};
+  (Array.isArray(payload.excluded) ? payload.excluded : []).slice(0, 200).forEach(function (key) {
+    if (typeof key === 'string' && key.length <= 200) excluded[key] = true;
+  });
+  return { statuses: statuses, excluded: excluded };
 }
