@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // CLOSET CHECK（Google Apps Script のアプリ。Next.js とは別物）
+    "closet-check/**",
   ]),
 ]);
 
