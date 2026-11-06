@@ -49,36 +49,33 @@
           <span class="card-text">サイズ感・丈・動きやすさを確認</span>
           <span class="card-progress" data-progress-for="fitting"></span>
         </button>
-
-        <button type="button" class="card" data-action="open-wardrobe" id="wardrobe-card">
-          <span class="card-label">MY CLOSET</span>
-          <span class="card-title">マイクローゼット</span>
-          <span class="card-text">手持ちの服の写真を見る</span>
-        </button>
-
-        <button type="button" class="card" data-action="open-patterns">
-          <span class="card-label">COLOR</span>
-          <span class="card-title">配色パターン</span>
-          <span class="card-text">色の組み合わせのレパートリーを見る</span>
-        </button>
-
-        <button type="button" class="card" data-action="open-history">
-          <span class="card-label">HISTORY</span>
-          <span class="card-title">購入履歴</span>
-          <span class="card-text">過去にチェックした商品を見る</span>
-        </button>
-
-        <button type="button" class="card" data-action="open-guide">
-          <span class="card-label">GUIDE</span>
-          <span class="card-title">アプリの使い方</span>
-          <span class="card-text">はじめての方はこちら</span>
-        </button>
       </div>
 
       <div id="home-current" class="home-current" hidden>
         <button type="button" class="button button-primary button-block" data-action="open-judge">チェック結果を判定する</button>
         <button type="button" class="button button-text" data-action="reset-check">チェック内容をリセット</button>
       </div>
+
+      <!-- そのほかのメニュー（小さめのカードを 2 列で） -->
+      <div class="card-grid">
+        <button type="button" class="card card-small" data-action="open-wardrobe">
+          <span class="card-label">MY CLOSET</span>
+          <span class="card-title">マイクローゼット</span>
+        </button>
+        <button type="button" class="card card-small" data-action="open-patterns">
+          <span class="card-label">COLOR</span>
+          <span class="card-title">配色パターン</span>
+        </button>
+        <button type="button" class="card card-small" data-action="open-history">
+          <span class="card-label">HISTORY</span>
+          <span class="card-title">購入履歴</span>
+        </button>
+        <button type="button" class="card card-small" data-action="open-guide">
+          <span class="card-label">GUIDE</span>
+          <span class="card-title">使い方</span>
+        </button>
+      </div>
+
     </section>
 
     <!-- ============================================================

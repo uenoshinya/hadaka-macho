@@ -48,6 +48,11 @@
   var STATUS_OK = 'ok';
   var STATUS_CONCERN = 'concern';
 
+  // 途中経過の保存（この端末のブラウザ内だけに保存。スプレッドシートには送らない）
+  var DRAFT_KEY = 'closetcheck.draft.v1';
+  var DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 日より古い途中経過は使わない
+  var FORM_FIELDS = ['name', 'brand', 'category', 'price', 'memo'];
+
   /* ------------------------------------------------------------
    * アプリの状態（今どの画面か・何にチェックしたか）
    * ------------------------------------------------------------ */
@@ -80,6 +85,7 @@
     patterns: null,        // 配色パターン { groups, patterns }
     patternGroup: '',      // 表示中のグループ（'' = すべて）
     patternsRequestId: 0,
+    backGuard: false,      // Android の戻るボタン対策で、履歴に 1 つ「足場」を積んでいるか
     guideImage: null, // NG例の見本画像（一度読み込んだら使い回す）
     guideImageLoading: false
   };
@@ -125,10 +131,14 @@
         buildProductForm();
         // シートの入力ミスがあれば開発者向けに表示（アプリは止めない）
         (data.warnings || []).forEach(function (w) { console.warn('[Checklist] ' + w); });
+        var restored = restoreDraft();
+        setupBackButton();
+        showScreen('home');
         if (data.items.length === 0) {
           showToast('チェック項目がありません。スプレッドシートを確認してください。', true);
+        } else if (restored) {
+          showToast('前回の途中のチェックを復元しました');
         }
-        showScreen('home');
       })
       .withFailureHandler(function (error) {
         byId('loading-message').textContent =
@@ -163,6 +173,7 @@
 
     if (screen === 'home') updateHome();
     if (screen === 'check') renderCheck(state.mode);
+    if (screen !== 'home' && screen !== 'loading') pushBackGuard();
 
     window.scrollTo(0, 0);
   }
@@ -285,6 +296,119 @@
     byId('product-form').reset();
     clearFormErrors();
     updateMemoCount();
+    clearDraft();
+  }
+
+  /* ============================================================
+   * 途中経過の保存と復元
+   *   店頭でページを再読み込みしたり、アプリを閉じてしまったりしても、
+   *   チェック内容と入力中の商品情報が消えないように、この端末のブラウザに保存します。
+   *   （プライベートブラウズなど保存できない環境では、何もせずに動き続けます）
+   * ============================================================ */
+
+  function saveDraft() {
+    var draft = {
+      savedAt: Date.now(),
+      statuses: state.statuses,
+      excluded: state.excluded,
+      recordId: state.recordId,
+      judgmentTouched: state.judgmentTouched,
+      form: {
+        conditionType: radioValue('conditionType'),
+        judgment: radioValue('judgment')
+      }
+    };
+    FORM_FIELDS.forEach(function (field) { draft.form[field] = byId('f-' + field).value; });
+    try {
+      window.localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+    } catch (e) {
+      // 保存できない環境では何もしない
+    }
+  }
+
+  function clearDraft() {
+    try {
+      window.localStorage.removeItem(DRAFT_KEY);
+    } catch (e) {
+      // 何もしない
+    }
+  }
+
+  /**
+   * 保存しておいた途中経過を復元します。
+   * @return {boolean} 復元したかどうか
+   */
+  function restoreDraft() {
+    var draft = null;
+    try {
+      draft = JSON.parse(window.localStorage.getItem(DRAFT_KEY) || 'null');
+    } catch (e) {
+      draft = null;
+    }
+    if (!draft || typeof draft !== 'object' || !(Date.now() - draft.savedAt < DRAFT_MAX_AGE_MS)) {
+      clearDraft();
+      return false;
+    }
+
+    // 今の Checklist に存在する項目・正しい値だけを戻す（シートが変わっていても壊れないように）
+    var validIds = {};
+    state.data.items.forEach(function (item) { validIds[item.id] = true; });
+    var count = 0;
+    Object.keys(draft.statuses || {}).forEach(function (id) {
+      var value = draft.statuses[id];
+      if (validIds[id] && (value === STATUS_OK || value === STATUS_CONCERN)) {
+        state.statuses[id] = value;
+        count++;
+      }
+    });
+    Object.keys(draft.excluded || {}).forEach(function (key) {
+      if (typeof key === 'string') state.excluded[key] = true;
+    });
+
+    var form = draft.form || {};
+    FORM_FIELDS.forEach(function (field) {
+      if (typeof form[field] === 'string') byId('f-' + field).value = form[field];
+    });
+    if (form.conditionType) setRadio('conditionType', form.conditionType);
+    if (form.judgment) setRadio('judgment', form.judgment);
+    updateMemoCount();
+    if (typeof draft.recordId === 'string' && /^CC-\d{8}-[a-z0-9]{8}$/.test(draft.recordId)) {
+      state.recordId = draft.recordId; // 同じ記録 ID を使うので、保存済みなら二重登録にならない
+    }
+    state.judgmentTouched = !!draft.judgmentTouched;
+
+    var hasForm = FORM_FIELDS.some(function (field) { return byId('f-' + field).value.trim() !== ''; });
+    return count > 0 || hasForm;
+  }
+
+  /* ============================================================
+   * スマートフォンの「戻る」ボタン（Android）
+   *   何もしないと、戻るボタンでアプリ自体が閉じてしまうため、
+   *   履歴に「足場」を 1 つ積んでおき、戻るボタンが押されたらアプリ内の「戻る」として扱います。
+   *   ホーム画面で押したときだけは足場を積み直さず、もう一度押すとアプリを閉じられます。
+   * ============================================================ */
+
+  function setupBackButton() {
+    if (!hasScriptHistory()) return;
+    google.script.history.setChangeHandler(function () {
+      state.backGuard = false;
+      if (!byId('image-viewer').hidden) {
+        closeViewer();
+      } else if (state.screen !== 'home' && state.screen !== 'loading') {
+        goBack();
+      }
+      if (state.screen !== 'home' || !byId('image-viewer').hidden) pushBackGuard();
+    });
+  }
+
+  function pushBackGuard() {
+    if (state.backGuard || !hasScriptHistory()) return;
+    state.backGuard = true;
+    google.script.history.push({ guard: true }, null, null);
+  }
+
+  function hasScriptHistory() {
+    return !!(window.google && google.script && google.script.history && google.script.history.push);
   }
 
   /* ============================================================
@@ -421,6 +545,7 @@
     var li = document.querySelector('#check-categories .item[data-id="' + cssEscape(id) + '"]');
     if (li) updateItemView(li, status);
     updateProgress();
+    saveDraft();
   }
 
   /** 項目 1 行の見た目を状態に合わせます */
@@ -450,6 +575,7 @@
     button.textContent = excluded ? '対象外を解除' : '対象外にする';
     button.setAttribute('aria-pressed', String(excluded));
     updateProgress();
+    saveDraft();
   }
 
   /* ============================================================
@@ -486,7 +612,7 @@
     byId('bar-progress').setAttribute('aria-valuenow', String(p.percent));
 
     var detail = byId('bar-detail');
-    detail.textContent = p.done + ' / ' + p.total + ' 項目' + (p.concern > 0 ? '・気になる ' + p.concern : '');
+    detail.textContent = p.done + '/' + p.total + '項目' + (p.concern > 0 ? '・気になる' + p.concern : '');
     detail.classList.toggle('has-concern', p.concern > 0);
 
     var sections = document.querySelectorAll('#check-categories .category');
@@ -657,6 +783,7 @@
     }
     // 記録 ID は 1 回のチェックにつき 1 つ（保存に失敗して再送しても二重登録にならない）
     if (!state.recordId) state.recordId = newRecordId();
+    saveDraft();
 
     // 古着 / 新品：未選択なら、古着チェックをしたかどうかで初期値を決める
     if (!radioValue('conditionType')) {
@@ -679,6 +806,7 @@
     var field = target.name || (target.id || '').replace(/^f-/, '');
     setFieldError(field, '');
     if (target.id === 'f-memo') updateMemoCount();
+    saveDraft();
   }
 
   function updateMemoCount() {
@@ -1286,6 +1414,7 @@
     viewer.hidden = false;
     document.body.classList.add('is-viewer-open');
     byId('viewer-close').focus();
+    pushBackGuard(); // ホーム画面から開いた場合も、戻るボタンでビューアーだけを閉じられるように
   }
 
   function openViewer() {

@@ -152,7 +152,10 @@
   .card-text { font-size: 14px; color: var(--color-gray-dark); }
   .card-progress { margin-top: 4px; font-size: 13px; color: var(--color-navy); font-weight: 600; }
   .card-progress:empty { display: none; }
-  .home-current { margin-top: 20px; display: grid; gap: 8px; }
+  .home-current { margin-top: 12px; display: grid; gap: 8px; }
+  .card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+  .card-small { padding: 12px 14px; border-left-width: 1px; border-top: 3px solid var(--color-navy); }
+  .card-small .card-title { font-size: 16px; }
 
   /* ---------- 凡例・バッジ ---------- */
   .legend {
@@ -209,7 +212,7 @@
   }
   .category-count { font-size: 13px; color: var(--color-gray-dark); white-space: nowrap; }
   .exclude-button {
-    min-height: 36px;
+    min-height: 40px;
     padding: 0 10px;
     border: 1px solid var(--color-gray);
     border-radius: var(--radius);
@@ -321,7 +324,8 @@
     margin-bottom: 6px;
     font-size: 14px;
   }
-  .check-bar-detail { color: var(--color-gray-dark); font-size: 13px; white-space: nowrap; }
+  .check-bar-text > span:first-child { white-space: nowrap; }
+  .check-bar-detail { color: var(--color-gray-dark); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .check-bar-detail.has-concern { color: var(--color-wine); font-weight: 600; }
 
   /* ---------- 購入判定 ---------- */
@@ -739,9 +743,20 @@
   .viewer-message:empty { display: none; }
   body.is-viewer-open { overflow: hidden; }
 
+  /* ---------- 小さな画面（iPhone SE など幅 360px 以下） ---------- */
+  @media (max-width: 360px) {
+    .concern-button { width: 64px; font-size: 12px; }
+    .card-small { padding: 10px; }
+    .card-small .card-title { font-size: 14px; }
+    .check-bar-text { flex-direction: column; gap: 0; line-height: 1.4; }
+    .check-bar-detail { font-size: 12px; }
+    .check-bar .button { padding: 0 14px; }
+  }
+
   /* ---------- 大きな画面（タブレット・PC） ---------- */
   @media (min-width: 600px) {
     .card-list { grid-template-columns: 1fr 1fr; }
+    .card-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
     .check-bar { padding-left: calc(50% - 304px); padding-right: calc(50% - 304px); }
     /* 大きな画面では最初から画像全体を表示 */
     .viewer-image { width: 100%; max-width: 1536px; margin: 0 auto; }
