@@ -118,6 +118,83 @@
     </section>
 
     <!-- ============================================================
+         ⑤ 商品情報・メモ入力画面
+         ============================================================ -->
+    <section id="screen-product" class="screen" hidden>
+      <p id="product-hint" class="screen-intro"></p>
+
+      <!-- novalidate：ブラウザ標準の検証ではなく、JavaScript.html の検証で分かりやすく表示する -->
+      <form id="product-form" class="form" novalidate>
+        <div class="field">
+          <label class="field-label" for="f-name">商品名 <span class="required">必須</span></label>
+          <input id="f-name" class="input" type="text" autocomplete="off" placeholder="例）ツイードジャケット">
+          <p id="e-name" class="field-error"></p>
+        </div>
+
+        <div class="field">
+          <label class="field-label" for="f-brand">ブランド</label>
+          <input id="f-brand" class="input" type="text" autocomplete="off" placeholder="例）Harris Tweed">
+          <p id="e-brand" class="field-error"></p>
+        </div>
+
+        <div class="field">
+          <label class="field-label" for="f-category">カテゴリー <span class="required">必須</span></label>
+          <select id="f-category" class="input"></select>
+          <p id="e-category" class="field-error"></p>
+        </div>
+
+        <fieldset class="field">
+          <legend class="field-label">古着 / 新品 <span class="required">必須</span></legend>
+          <div id="f-conditionType" class="choice-group"></div>
+          <p id="e-conditionType" class="field-error"></p>
+        </fieldset>
+
+        <div class="field">
+          <label class="field-label" for="f-price">価格 <span class="required">必須</span></label>
+          <div class="input-with-unit">
+            <input id="f-price" class="input" type="text" inputmode="numeric" autocomplete="off" placeholder="例）8800">
+            <span class="input-unit">円</span>
+          </div>
+          <p id="e-price" class="field-error"></p>
+        </div>
+
+        <div class="field">
+          <label class="field-label" for="f-memo">気になる点・自由メモ</label>
+          <textarea id="f-memo" class="input textarea" rows="4" placeholder="例）袖口に少しスレあり。手持ちのグレーパンツと合わせたい"></textarea>
+          <p class="field-help"><span id="memo-count">0</span> / <span id="memo-max"></span> 文字</p>
+          <p id="e-memo" class="field-error"></p>
+        </div>
+
+        <fieldset class="field">
+          <legend class="field-label">総合判定 <span class="required">必須</span></legend>
+          <div id="f-judgment" class="choice-group choice-judgment"></div>
+          <p class="field-help">参考判定を初期値にしています。最終的な判定はご自身で選んでください。</p>
+          <p id="e-judgment" class="field-error"></p>
+        </fieldset>
+
+        <p id="form-error" class="form-error" role="alert" hidden></p>
+        <button type="submit" id="save-button" class="button button-primary button-block">この内容で保存</button>
+      </form>
+    </section>
+
+    <!-- 保存完了画面 -->
+    <section id="screen-saved" class="screen" hidden>
+      <div class="saved">
+        <p class="saved-mark" aria-hidden="true">✓</p>
+        <h2 class="saved-title">保存しました</h2>
+        <dl class="saved-summary">
+          <dt>商品名</dt><dd id="saved-name"></dd>
+          <dt>総合判定</dt><dd id="saved-judgment"></dd>
+          <dt>保存日時</dt><dd id="saved-date"></dd>
+        </dl>
+        <div class="judge-actions">
+          <button type="button" class="button button-primary button-block" data-action="start-new">新しいチェックを始める</button>
+          <button type="button" class="button button-secondary button-block" data-action="open-history">購入履歴を見る</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
          ⑥ 購入履歴画面（STEP 6 で実装）
          ============================================================ -->
     <section id="screen-history" class="screen" hidden>

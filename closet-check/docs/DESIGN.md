@@ -274,3 +274,6 @@ closet-check/
 4. **NG例の見本画像（追加仕様）**：チェック画面上部の「NG例の見本を見る」で 1 枚の見本画像を全画面表示する。
    画像は左半分が古着の状態、右半分が試着のチェックリスト。スマホでは今の画面に合う半分を画面幅に合わせて表示し、
    横スクロールでもう半分、「拡大」で 2 倍表示。画像は Googleドライブに置き、Settings の GUIDE_IMAGE_FILE_ID で指定する。
+5. **総合判定の保存（STEP 5）**：PurchaseHistory の judgment にはユーザーが選んだ判定、checked_items_json の auto_judgment にはアプリの参考判定を保存する。
+   checked_items_json の items には mode（vintage / fitting）を持たせ、対象外カテゴリーの項目は status: "excluded" とする。
+6. **価格は必須**：0〜PRICE_MAX の整数。「8,800」「８８００円」のような書き方も受け付ける。

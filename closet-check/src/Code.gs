@@ -72,6 +72,16 @@ const CONFIG = {
   // 古着 / 新品 の表記
   CONDITION_TYPES: ['古着', '新品'],
 
+  // 入力できる文字数の上限（画面側にも同じ値を渡して使う）
+  LIMITS: {
+    PRODUCT_NAME: 100,
+    BRAND: 50,
+    MEMO: 1000
+  },
+
+  // 保存データ（checked_items_json）の形式バージョン。形を変えたら数字を上げる
+  JSON_VERSION: 1,
+
   // NG例の見本画像の上限サイズ（バイト）。大きすぎると店頭で表示に時間がかかるため
   GUIDE_IMAGE_MAX_BYTES: 5 * 1024 * 1024,
 
@@ -437,8 +447,97 @@ function getInitialData() {
     settings: settings,
     items: checklist.items,
     warnings: checklist.warnings,
-    hasGuideImage: settings.GUIDE_IMAGE_FILE_ID !== ''
+    hasGuideImage: settings.GUIDE_IMAGE_FILE_ID !== '',
+    conditionTypes: CONFIG.CONDITION_TYPES,
+    judgments: CONFIG.JUDGMENTS,
+    limits: CONFIG.LIMITS
   };
+}
+
+/**
+ * 商品情報とチェック結果を PurchaseHistory シートに 1 行保存します。
+ *
+ *   ・LockService で同時保存の競合を防ぎます
+ *   ・入力値をサーバー側でも検証します（画面側の検証が正しくても必ず再確認）
+ *   ・判定は画面から送られた値を使わず、ここで計算し直します
+ *   ・同じ record_id が既にあれば追加せず、その記録を返します（二重保存の防止）
+ *
+ * @param {{recordId: string, product: Object, statuses: Object, excluded: string[]}} payload
+ * @return {{recordId: string, createdAt: string, judgment: string, autoJudgment: string, duplicated: boolean}}
+ */
+function saveRecord(payload) {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('保存するデータが受け取れませんでした。画面を再読み込みしてください。');
+  }
+  const recordId = String(payload.recordId || '');
+  if (!/^CC-\d{8}-[a-z0-9]{8}$/.test(recordId)) {
+    throw new Error('記録 ID が不正です。画面を再読み込みしてから、もう一度保存してください。');
+  }
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(CONFIG.LOCK_TIMEOUT_MS)) {
+    throw new Error('保存が混み合っています。少し待ってから、もう一度お試しください。');
+  }
+  try {
+    ensureSheets_();
+    const settings = readSettings_();
+    const sheet = getSpreadsheet_().getSheetByName(CONFIG.SHEETS.HISTORY.name);
+    const col = indexMap_(CONFIG.SHEETS.HISTORY.headers);
+
+    // 二重保存の防止：同じ record_id が既にあれば、保存済みとして返す
+    const existing = findHistoryRow_(sheet, recordId);
+    if (existing) {
+      return {
+        recordId: recordId,
+        createdAt: formatDate_(existing[col.created_at]),
+        judgment: String(existing[col.judgment]),
+        autoJudgment: String(existing[col.judgment]),
+        duplicated: true
+      };
+    }
+
+    // 入力値の検証（問題があればエラーにして保存しない）
+    const product = validateProduct_(payload.product, settings);
+
+    // 判定をサーバー側で計算し直す
+    const input = validateCheckPayload_(payload);
+    const items = readChecklist_().items;
+    const result = judgeChecks_(input.statuses, input.excluded, items, settings);
+    if (result.overall === CONFIG.NOT_PERFORMED) {
+      throw new Error('チェックした項目がありません。チェックしてから保存してください。');
+    }
+
+    const now = new Date();
+    const json = buildCheckedItemsJson_(result, input.statuses, input.excluded, items);
+
+    // 列の並びは CONFIG.SHEETS.HISTORY.headers と同じにする
+    const row = [];
+    row[col.record_id] = recordId;
+    row[col.created_at] = now;
+    row[col.product_name] = sanitizeForSheet_(product.name);
+    row[col.brand] = sanitizeForSheet_(product.brand);
+    row[col.category] = sanitizeForSheet_(product.category);
+    row[col.condition_type] = product.conditionType;
+    row[col.price] = product.price;
+    row[col.condition_result] = result.modes.vintage.result;
+    row[col.fitting_result] = result.modes.fitting.result;
+    row[col.judgment] = product.judgment;
+    row[col.memo] = sanitizeForSheet_(product.memo);
+    row[col.checked_items_json] = JSON.stringify(json);
+
+    sheet.getRange(sheet.getLastRow() + 1, 1, 1, row.length).setValues([row]);
+    SpreadsheetApp.flush(); // ロックを外す前に書き込みを確定させる
+
+    return {
+      recordId: recordId,
+      createdAt: formatDate_(now),
+      judgment: product.judgment,
+      autoJudgment: result.overall,
+      duplicated: false
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /**
@@ -779,4 +878,133 @@ function validateCheckPayload_(payload) {
     if (typeof key === 'string' && key.length <= 200) excluded[key] = true;
   });
   return { statuses: statuses, excluded: excluded };
+}
+
+
+/* ============================================================
+ * 9. 保存処理の部品
+ * ============================================================ */
+
+/**
+ * 商品情報の入力値を検証し、整えた値を返します。
+ * 問題があれば、すべての問題点をまとめたエラーにします。
+ */
+function validateProduct_(raw, settings) {
+  const p = raw && typeof raw === 'object' ? raw : {};
+  const errors = [];
+  const limits = CONFIG.LIMITS;
+
+  const name = cleanText_(p.name, false);
+  if (name === '') errors.push('商品名を入力してください');
+  else if (name.length > limits.PRODUCT_NAME) errors.push('商品名は ' + limits.PRODUCT_NAME + ' 文字以内にしてください');
+
+  const brand = cleanText_(p.brand, false);
+  if (brand.length > limits.BRAND) errors.push('ブランドは ' + limits.BRAND + ' 文字以内にしてください');
+
+  const category = cleanText_(p.category, false);
+  if (settings.CATEGORY_OPTIONS.indexOf(category) === -1) errors.push('カテゴリーを選んでください');
+
+  const conditionType = cleanText_(p.conditionType, false);
+  if (CONFIG.CONDITION_TYPES.indexOf(conditionType) === -1) errors.push('古着か新品かを選んでください');
+
+  // 価格：「8,800」「8800円」のような書き方も受け付ける
+  const priceText = String(p.price == null ? '' : p.price)
+    .replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); }) // 全角数字 → 半角
+    .replace(/[,，円\s]/g, '');
+  const price = Number(priceText);
+  if (priceText === '') errors.push('価格を入力してください');
+  else if (!/^\d+$/.test(priceText) || price > settings.PRICE_MAX) {
+    errors.push('価格は 0〜' + settings.PRICE_MAX.toLocaleString() + ' 円の整数で入力してください');
+  }
+
+  const memo = cleanText_(p.memo, true);
+  if (memo.length > limits.MEMO) errors.push('メモは ' + limits.MEMO + ' 文字以内にしてください');
+
+  const judgment = cleanText_(p.judgment, false);
+  if (CONFIG.JUDGMENTS.indexOf(judgment) === -1) errors.push('総合判定を選んでください');
+
+  if (errors.length > 0) {
+    throw new Error('入力内容を確認してください：' + errors.join('／'));
+  }
+  return {
+    name: name, brand: brand, category: category, conditionType: conditionType,
+    price: price, memo: memo, judgment: judgment
+  };
+}
+
+/**
+ * 文字列を整えます（前後の空白を削除し、制御文字を取り除く）。
+ * @param {boolean} allowNewline true なら改行を残す（メモ用）
+ */
+function cleanText_(value, allowNewline) {
+  let text = String(value == null ? '' : value).replace(/\r\n?/g, '\n');
+  text = allowNewline
+    ? text.replace(/[\u0000-\u0009\u000B-\u001F\u007F]/g, '')
+    : text.replace(/[\u0000-\u001F\u007F]/g, ' ');
+  return text.trim();
+}
+
+/**
+ * スプレッドシートの数式として解釈されないようにします（数式インジェクション対策）。
+ * = + - @ で始まる文字列の先頭に ' を付けると、文字としてそのまま保存されます。
+ */
+function sanitizeForSheet_(text) {
+  return /^[=+\-@]/.test(text) ? "'" + text : text;
+}
+
+/**
+ * checked_items_json に保存する内容を作ります。
+ * 保存時点の項目名も記録するので、後で Checklist を変更しても履歴は正しく表示できます。
+ */
+function buildCheckedItemsJson_(result, statuses, excluded, items) {
+  const progress = {};
+  const excludedCategories = [];
+  const savedItems = [];
+
+  Object.keys(CONFIG.MODES).forEach(function (mode) {
+    const summary = result.modes[mode];
+    progress[mode] = Math.round(summary.progress * 100) / 100;
+    if (summary.done === 0) return; // 実施していないチェックは項目を保存しない
+
+    items.forEach(function (item) {
+      if (CONFIG.MODES[mode].targets.indexOf(item.targetType) === -1) return;
+      const isExcluded = !!excluded[mode + '|' + item.category];
+      if (isExcluded && excludedCategories.indexOf(item.category) === -1) excludedCategories.push(item.category);
+      savedItems.push({
+        mode: mode,
+        id: item.id,
+        category: item.category,
+        name: item.name,
+        severity: item.severity,
+        status: isExcluded ? 'excluded' : (statuses[item.id] || 'unchecked')
+      });
+    });
+  });
+
+  return {
+    version: CONFIG.JSON_VERSION,
+    auto_judgment: result.overall,
+    reasons: result.reasons.map(function (r) { return { level: r.level, text: r.text }; }),
+    progress: progress,
+    excluded_categories: excludedCategories,
+    items: savedItems
+  };
+}
+
+/** PurchaseHistory から record_id が一致する行を探します（無ければ null） */
+function findHistoryRow_(sheet, recordId) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  const width = CONFIG.SHEETS.HISTORY.headers.length;
+  const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+  for (let i = values.length - 1; i >= 0; i--) { // 新しい行ほど下にあるので下から探す
+    if (String(values[i][0]) === recordId) return values[i];
+  }
+  return null;
+}
+
+/** 日時を「2026/11/06 14:32」の形にします */
+function formatDate_(value) {
+  if (!(value instanceof Date)) return String(value || '');
+  return Utilities.formatDate(value, CONFIG.TIMEZONE, 'yyyy/MM/dd HH:mm');
 }

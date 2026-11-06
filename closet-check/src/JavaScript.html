@@ -36,6 +36,8 @@
     home: '',
     check: '',             // チェック画面はモードごとのタイトルを使う
     judge: '購入判定',
+    product: '商品情報の入力',
+    saved: '保存完了',
     history: '購入履歴',
     guide: 'アプリの使い方'
   };
@@ -55,6 +57,9 @@
     judgeFrom: 'home',     // 判定画面の「戻る」で戻る先（'home' か 'check'）
     judgment: null,        // 最後に受け取った判定結果（STEP 5 の保存で使う）
     judgeRequestId: 0,     // 古い判定結果を無視するための番号
+    recordId: null,        // 保存用の記録 ID（同じチェックでは同じ ID を使い、二重保存を防ぐ）
+    judgmentTouched: false,// 総合判定をユーザーが自分で選んだか
+    isSaving: false,       // 保存中フラグ（保存ボタンの連打を防ぐ）
     guideImage: null, // NG例の見本画像（一度読み込んだら使い回す）
     guideImageLoading: false
   };
@@ -71,6 +76,9 @@
     byId('back-button').addEventListener('click', goBack);
     byId('retry-button').addEventListener('click', loadInitialData);
     byId('judge-retry-button').addEventListener('click', runJudgment);
+    byId('product-form').addEventListener('submit', onSaveSubmit);
+    byId('product-form').addEventListener('input', onFormInput);
+    byId('product-form').addEventListener('change', onFormInput);
     byId('viewer-close').addEventListener('click', closeViewer);
     byId('viewer-zoom').addEventListener('click', toggleViewerZoom);
     document.addEventListener('keydown', function (event) {
@@ -89,6 +97,7 @@
       .withSuccessHandler(function (data) {
         state.data = data;
         byId('header-brand').textContent = data.appName;
+        buildProductForm();
         // シートの入力ミスがあれば開発者向けに表示（アプリは止めない）
         (data.warnings || []).forEach(function (w) { console.warn('[Checklist] ' + w); });
         if (data.items.length === 0) {
@@ -135,6 +144,10 @@
 
   /** ヘッダーの「戻る」ボタン（判定画面からは、来たチェック画面に戻る） */
   function goBack() {
+    if (state.screen === 'product') {
+      showScreen('judge');
+      return;
+    }
     if (state.screen === 'judge' && state.judgeFrom === 'check') {
       showScreen('check');
       return;
@@ -164,8 +177,10 @@
         showScreen('check', state.judgeFrom === 'check' ? state.mode : firstPerformedMode());
         break;
       case 'open-product':
-        // STEP 5 で商品情報の入力画面を実装します
-        showToast('商品情報の保存は STEP 5 で実装します');
+        openProduct();
+        break;
+      case 'start-new':
+        showScreen('home');
         break;
       case 'reset-check':
         resetCheck();
@@ -198,11 +213,22 @@
 
   /** チェック内容をすべて消して、新しい商品のチェックを始めます */
   function resetCheck() {
-    if (!window.confirm('チェック内容をすべて消去します。よろしいですか？')) return;
-    state.statuses = {};
-    state.excluded = {};
+    if (!window.confirm('チェック内容と入力中の商品情報をすべて消去します。よろしいですか？')) return;
+    clearCurrentCheck();
     updateHome();
     showToast('チェック内容をリセットしました');
+  }
+
+  /** 現在のチェック・判定・商品情報の入力内容を初期状態に戻します */
+  function clearCurrentCheck() {
+    state.statuses = {};
+    state.excluded = {};
+    state.judgment = null;
+    state.recordId = null;
+    state.judgmentTouched = false;
+    byId('product-form').reset();
+    clearFormErrors();
+    updateMemoCount();
   }
 
   /* ============================================================
@@ -510,6 +536,231 @@
       if (computeProgress(modes[i]).done > 0) return modes[i];
     }
     return modes[0];
+  }
+
+  /* ============================================================
+   * 商品情報の入力と保存
+   * ============================================================ */
+
+  /** 選択肢（カテゴリー・古着/新品・総合判定）を設定に合わせて作ります（起動時に 1 回） */
+  function buildProductForm() {
+    var data = state.data;
+
+    var select = byId('f-category');
+    select.textContent = '';
+    var placeholder = el('option', { text: '選択してください' });
+    placeholder.value = '';
+    select.appendChild(placeholder);
+    data.settings.CATEGORY_OPTIONS.forEach(function (name) {
+      var option = el('option', { text: name });
+      option.value = name;
+      select.appendChild(option);
+    });
+
+    buildChoices('f-conditionType', 'conditionType', data.conditionTypes);
+    buildChoices('f-judgment', 'judgment', data.judgments);
+
+    // 文字数の上限はサーバーの設定（CONFIG.LIMITS）に合わせる
+    byId('f-name').maxLength = data.limits.PRODUCT_NAME;
+    byId('f-brand').maxLength = data.limits.BRAND;
+    byId('f-memo').maxLength = data.limits.MEMO;
+    byId('memo-max').textContent = String(data.limits.MEMO);
+  }
+
+  /** ボタン風のラジオボタンを作ります */
+  function buildChoices(containerId, name, values) {
+    var box = byId(containerId);
+    box.textContent = '';
+    values.forEach(function (value) {
+      var label = el('label', { className: 'choice' });
+      var input = el('input');
+      input.type = 'radio';
+      input.name = name;
+      input.value = value;
+      label.appendChild(input);
+      label.appendChild(el('span', { text: value }));
+      box.appendChild(label);
+    });
+  }
+
+  /** 商品情報の入力画面を開きます（判定画面の「商品情報を入力して保存」） */
+  function openProduct() {
+    if (!state.judgment) {
+      showToast('先に判定を行ってください。', true);
+      return;
+    }
+    // 記録 ID は 1 回のチェックにつき 1 つ（保存に失敗して再送しても二重登録にならない）
+    if (!state.recordId) state.recordId = newRecordId();
+
+    // 古着 / 新品：未選択なら、古着チェックをしたかどうかで初期値を決める
+    if (!radioValue('conditionType')) {
+      setRadio('conditionType', computeProgress('vintage').done > 0 ? '古着' : '新品');
+    }
+    // 総合判定：自分で選んでいなければ、参考判定を初期値にする
+    if (!state.judgmentTouched) {
+      setRadio('judgment', state.judgment.overall);
+    }
+    byId('product-hint').textContent =
+      '参考判定は「' + state.judgment.overall + '」です。商品の情報を入力して保存しましょう。';
+    byId('form-error').hidden = true;
+    showScreen('product');
+  }
+
+  /** 入力中にエラー表示を消し、メモの文字数を更新します */
+  function onFormInput(event) {
+    var target = event.target;
+    if (target.name === 'judgment') state.judgmentTouched = true;
+    var field = target.name || (target.id || '').replace(/^f-/, '');
+    setFieldError(field, '');
+    if (target.id === 'f-memo') updateMemoCount();
+  }
+
+  function updateMemoCount() {
+    byId('memo-count').textContent = String(byId('f-memo').value.length);
+  }
+
+  /**
+   * 入力値を検証します（サーバー側でも同じ内容を必ず再確認します）。
+   * @return {{values: Object, errors: Object}} errors は { 項目名: メッセージ }
+   */
+  function validateProductForm() {
+    var limits = state.data.limits;
+    var priceMax = state.data.settings.PRICE_MAX;
+    var values = {
+      name: byId('f-name').value.trim(),
+      brand: byId('f-brand').value.trim(),
+      category: byId('f-category').value,
+      conditionType: radioValue('conditionType'),
+      price: toHalfWidth(byId('f-price').value).replace(/[,，円\s]/g, ''),
+      memo: byId('f-memo').value.trim(),
+      judgment: radioValue('judgment')
+    };
+    var errors = {};
+
+    if (values.name === '') errors.name = '商品名を入力してください';
+    else if (values.name.length > limits.PRODUCT_NAME) errors.name = limits.PRODUCT_NAME + ' 文字以内で入力してください';
+    if (values.brand.length > limits.BRAND) errors.brand = limits.BRAND + ' 文字以内で入力してください';
+    if (values.category === '') errors.category = 'カテゴリーを選んでください';
+    if (!values.conditionType) errors.conditionType = '古着か新品かを選んでください';
+    if (values.price === '') errors.price = '価格を入力してください';
+    else if (!/^\d+$/.test(values.price) || Number(values.price) > priceMax) {
+      errors.price = '0〜' + priceMax.toLocaleString() + ' 円の整数で入力してください';
+    }
+    if (values.memo.length > limits.MEMO) errors.memo = limits.MEMO + ' 文字以内で入力してください';
+    if (!values.judgment) errors.judgment = '総合判定を選んでください';
+
+    return { values: values, errors: errors };
+  }
+
+  /** 「この内容で保存」 */
+  function onSaveSubmit(event) {
+    event.preventDefault(); // ページ移動を止める（google.script.run で送信する）
+    if (state.isSaving) return; // 保存中の連打を無視（二重保存の防止）
+
+    clearFormErrors();
+    var check = validateProductForm();
+    var fields = Object.keys(check.errors);
+    if (fields.length > 0) {
+      fields.forEach(function (field) { setFieldError(field, check.errors[field]); });
+      focusField(fields[0]);
+      showToast('入力内容を確認してください', true);
+      return;
+    }
+
+    setSaving(true);
+    google.script.run
+      .withSuccessHandler(function (result) {
+        setSaving(false);
+        showSaved(check.values, result);
+      })
+      .withFailureHandler(function (error) {
+        setSaving(false);
+        var box = byId('form-error');
+        box.textContent = '保存できませんでした。入力内容はそのまま残っています。\n' + errorMessage(error);
+        box.hidden = false;
+        showToast('保存できませんでした', true);
+      })
+      .saveRecord({
+        recordId: state.recordId,
+        product: check.values,
+        statuses: state.statuses,
+        excluded: Object.keys(state.excluded)
+      });
+  }
+
+  /** 保存中はボタンを押せなくし、表示を変えます */
+  function setSaving(saving) {
+    state.isSaving = saving;
+    var button = byId('save-button');
+    button.disabled = saving;
+    button.textContent = saving ? '保存中…' : 'この内容で保存';
+  }
+
+  /** 保存完了画面を表示し、次のチェックに備えて入力内容を消します */
+  function showSaved(values, result) {
+    byId('saved-name').textContent = values.name;
+    byId('saved-judgment').textContent = result.judgment +
+      (result.autoJudgment && result.autoJudgment !== result.judgment ? '（参考判定：' + result.autoJudgment + '）' : '');
+    byId('saved-date').textContent = result.createdAt;
+    clearCurrentCheck();
+    showScreen('saved');
+    showToast(result.duplicated ? 'この記録は保存済みです' : '保存しました');
+  }
+
+  function setFieldError(field, message) {
+    var errorEl = byId('e-' + field);
+    var input = byId('f-' + field);
+    if (!errorEl || !input) return;
+    errorEl.textContent = message;
+    input.classList.toggle('is-invalid', message !== '');
+  }
+
+  function clearFormErrors() {
+    ['name', 'brand', 'category', 'conditionType', 'price', 'memo', 'judgment']
+      .forEach(function (field) { setFieldError(field, ''); });
+    byId('form-error').hidden = true;
+  }
+
+  /** エラーのある項目までスクロールし、入力できるようにします */
+  function focusField(field) {
+    var input = byId('f-' + field);
+    if (!input) return;
+    var target = input.querySelector('input') || input;
+    target.focus();
+    input.scrollIntoView({ block: 'center' });
+  }
+
+  function radioValue(name) {
+    var checked = document.querySelector('input[name="' + name + '"]:checked');
+    return checked ? checked.value : '';
+  }
+
+  function setRadio(name, value) {
+    var inputs = document.querySelectorAll('input[name="' + name + '"]');
+    for (var i = 0; i < inputs.length; i++) inputs[i].checked = (inputs[i].value === value);
+  }
+
+  /** 全角数字を半角にします（価格入力用） */
+  function toHalfWidth(text) {
+    return String(text).replace(/[０-９]/g, function (c) {
+      return String.fromCharCode(c.charCodeAt(0) - 0xFEE0);
+    });
+  }
+
+  /** 記録 ID を作ります。例）CC-20261106-k3x9a0qz */
+  function newRecordId() {
+    var now = new Date();
+    var ymd = String(now.getFullYear()) + pad2(now.getMonth() + 1) + pad2(now.getDate());
+    var chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    var random = '';
+    var bytes = new Uint8Array(8);
+    (window.crypto || window.msCrypto).getRandomValues(bytes);
+    for (var i = 0; i < bytes.length; i++) random += chars.charAt(bytes[i] % chars.length);
+    return 'CC-' + ymd + '-' + random;
+  }
+
+  function pad2(n) {
+    return (n < 10 ? '0' : '') + n;
   }
 
   /* ============================================================
