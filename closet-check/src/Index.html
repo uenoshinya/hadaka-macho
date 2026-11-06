@@ -50,6 +50,18 @@
           <span class="card-progress" data-progress-for="fitting"></span>
         </button>
 
+        <button type="button" class="card" data-action="open-wardrobe" id="wardrobe-card">
+          <span class="card-label">MY CLOSET</span>
+          <span class="card-title">マイクローゼット</span>
+          <span class="card-text">手持ちの服の写真を見る</span>
+        </button>
+
+        <button type="button" class="card" data-action="open-patterns">
+          <span class="card-label">COLOR</span>
+          <span class="card-title">配色パターン</span>
+          <span class="card-text">色の組み合わせのレパートリーを見る</span>
+        </button>
+
         <button type="button" class="card" data-action="open-history">
           <span class="card-label">HISTORY</span>
           <span class="card-title">購入履歴</span>
@@ -249,6 +261,35 @@
     </section>
 
     <!-- ============================================================
+         マイクローゼット（手持ちの服の写真）
+         ============================================================ -->
+    <section id="screen-wardrobe" class="screen" hidden>
+      <p id="wardrobe-message" class="center-message" hidden></p>
+      <div id="wardrobe-retry" class="center-message" hidden>
+        <button type="button" id="wardrobe-retry-button" class="button button-secondary">再読み込み</button>
+      </div>
+      <div id="wardrobe-tabs" class="chip-row"></div>
+      <p id="wardrobe-count" class="screen-intro"></p>
+      <ul id="wardrobe-grid" class="photo-grid"></ul>
+      <div class="center-message">
+        <button type="button" id="wardrobe-more" class="button button-secondary" hidden>もっと見る</button>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         配色パターン
+         ============================================================ -->
+    <section id="screen-patterns" class="screen" hidden>
+      <p id="patterns-message" class="center-message" hidden></p>
+      <div id="patterns-retry" class="center-message" hidden>
+        <button type="button" id="patterns-retry-button" class="button button-secondary">再読み込み</button>
+      </div>
+      <p class="screen-intro">配色パターンは、スプレッドシートの ColorPatterns シートで追加・編集できます。帯の幅は色の割合（面積の目安）です。</p>
+      <div id="pattern-tabs" class="chip-row"></div>
+      <div id="pattern-list" class="pattern-list"></div>
+    </section>
+
+    <!-- ============================================================
          アプリの使い方
          ============================================================ -->
     <section id="screen-guide" class="screen" hidden>
@@ -267,6 +308,12 @@
           <li><span class="legend-box legend-concern">!</span>問題を見つけたら「気になる」をタップ</li>
           <li>分からない・見ていない項目は、そのままで構いません（未確認）</li>
           <li>判断に迷ったら、チェック画面上部の「NG例の見本を見る」で写真の例を確認できます</li>
+        </ul>
+
+        <h2 class="section-title">マイクローゼット・配色パターン</h2>
+        <ul class="guide-list">
+          <li>マイクローゼット：Googleドライブの「手持ちの服」フォルダの写真を、カテゴリー（サブフォルダ）ごとに表示します。試着チェックの「手持ちの服や靴と合わせられそうか」からも開けます</li>
+          <li>配色パターン：スプレッドシートの ColorPatterns シートに登録した色の組み合わせを表示します</li>
         </ul>
 
         <h2 class="section-title">判定について</h2>
@@ -293,14 +340,14 @@
   <!-- NG例の見本画像ビューアー（「NG例の見本を見る」で開く） -->
   <div id="image-viewer" class="viewer" role="dialog" aria-modal="true" aria-labelledby="viewer-title" hidden>
     <div class="viewer-bar">
-      <h2 id="viewer-title" class="viewer-title">NG例の見本</h2>
+      <h2 id="viewer-title" class="viewer-title"></h2>
       <button type="button" id="viewer-zoom" class="viewer-button" aria-pressed="false">拡大</button>
       <button type="button" id="viewer-close" class="viewer-button viewer-close">閉じる ✕</button>
     </div>
-    <p class="viewer-hint">横にスクロールすると、もう一方のチェックリストも見られます</p>
+    <p id="viewer-hint" class="viewer-hint">横にスクロールすると、もう一方のチェックリストも見られます</p>
     <div id="viewer-scroll" class="viewer-scroll">
       <p id="viewer-message" class="viewer-message"></p>
-      <img id="viewer-image" class="viewer-image" alt="古着の状態と試着のフィット感のNG例をまとめた見本画像" hidden>
+      <img id="viewer-image" class="viewer-image" alt="" hidden>
     </div>
   </div>
 

@@ -277,3 +277,40 @@ closet-check/
 5. **総合判定の保存（STEP 5）**：PurchaseHistory の judgment にはユーザーが選んだ判定、checked_items_json の auto_judgment にはアプリの参考判定を保存する。
    checked_items_json の items には mode（vintage / fitting）を持たせ、対象外カテゴリーの項目は status: "excluded" とする。
 6. **価格は必須**：0〜PRICE_MAX の整数。「8,800」「８８００円」のような書き方も受け付ける。
+
+---
+
+## 7. 追加機能（STEP 6 の後に追加）
+
+### 7-1. マイクローゼット（手持ちの服の写真）
+
+- 写真は Googleドライブの「手持ちの服」フォルダに置き、**サブフォルダ＝カテゴリー**（タブ）とする。フォルダ直下の写真は「未分類」タブ。
+- Settings の `WARDROBE_FOLDER_ID` にフォルダの URL か ID を設定する。
+- 読み込みは 3 段階：カテゴリー一覧 → 写真の一覧（名前だけ）→ 縮小画像を 24 枚ずつ（CacheService で 6 時間キャッシュ）。
+- 拡大表示は、ドライブの縮小画像サービス（長辺 1200px）→ 元画像（5MB 以下・JPEG/PNG/WebP/GIF）→ 一覧用の縮小画像、の順に試す。
+- 安全のため、手持ちの服フォルダと直下のサブフォルダにある画像しか読み込まない。
+- 試着チェックの `WARDROBE_LINK_ITEM_IDS`（初期値 F20）の項目に「手持ちの服を見る」ボタンを付け、戻ったときは元のスクロール位置に戻す。
+
+| API | 用途 |
+|---|---|
+| `getWardrobeCategories()` | サブフォルダの一覧 |
+| `getWardrobeFiles(folderId)` | フォルダ内の写真の一覧（新しい順） |
+| `getWardrobeThumbnails(fileIds)` | 縮小画像（最大 24 枚） |
+| `getWardrobeImage(fileId)` | 拡大表示用の画像 |
+
+### 7-2. 配色パターン（ColorPatterns シート）
+
+| 列 | 説明 |
+|---|---|
+| pattern_id | 一意な ID（例 P01） |
+| group | タブに表示するグループ名（例 ブラウン） |
+| pattern_name | パターン名（例 ブラウン × クリーム × オリーブ） |
+| color1_name 〜 color4_name | 色の名前 |
+| color1_hex 〜 color4_hex | 色コード（#4A3015 など）。入力するとセルがその色に塗られる（onEdit） |
+| ratio | 色の割合（例 5:3:2）。帯の幅になる。空・数が合わないときは均等 |
+| memo | コーデ例などのメモ |
+| active | TRUE で表示 |
+| display_order | 表示順 |
+
+- 初期データとして、トラッド・ブリティッシュ系の定番配色を 10 件入れる（シートが空のときだけ）。
+- API：`getColorPatterns()`（不正な色コードは読み飛ばして warnings に入れる）。

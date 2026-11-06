@@ -38,6 +38,8 @@
     judge: '購入判定',
     product: '商品情報の入力',
     detail: '購入履歴の詳細',
+    wardrobe: 'マイクローゼット',
+    patterns: '配色パターン',
     saved: '保存完了',
     history: '購入履歴',
     guide: 'アプリの使い方'
@@ -63,6 +65,21 @@
     isSaving: false,       // 保存中フラグ（保存ボタンの連打を防ぐ）
     historyRequestId: 0,   // 古い履歴の読み込み結果を無視するための番号
     detailRecordId: null,  // 表示中（読み込み中）の詳細の記録 ID
+    viewerKind: null,      // ビューアーに表示中のもの（'guide' = NG例 / 'photo' = 手持ちの服）
+    viewerPhotoId: null,   // ビューアーに表示中の写真の ID
+    checkScrollY: 0,       // チェック画面からマイクローゼットを開いたときのスクロール位置
+    wardrobeFrom: 'home',  // マイクローゼットの「戻る」で戻る先
+    wardrobe: {            // マイクローゼットの読み込み結果（アプリを開いている間は使い回す）
+      categories: null,    // [{ id, name }]
+      files: {},           // { フォルダ ID: [{ id, name }] }
+      thumbs: {},          // { 写真 ID: data URL | null }
+      current: null,       // 表示中のフォルダ ID
+      shown: 0,            // 表示中の枚数
+      requestId: 0
+    },
+    patterns: null,        // 配色パターン { groups, patterns }
+    patternGroup: '',      // 表示中のグループ（'' = すべて）
+    patternsRequestId: 0,
     guideImage: null, // NG例の見本画像（一度読み込んだら使い回す）
     guideImageLoading: false
   };
@@ -81,6 +98,9 @@
     byId('judge-retry-button').addEventListener('click', runJudgment);
     byId('product-form').addEventListener('submit', onSaveSubmit);
     byId('history-retry-button').addEventListener('click', loadHistory);
+    byId('wardrobe-retry-button').addEventListener('click', loadWardrobe);
+    byId('wardrobe-more').addEventListener('click', showMorePhotos);
+    byId('patterns-retry-button').addEventListener('click', loadPatterns);
     byId('detail-retry-button').addEventListener('click', function () { loadDetail(state.detailRecordId); });
     byId('product-form').addEventListener('input', onFormInput);
     byId('product-form').addEventListener('change', onFormInput);
@@ -157,6 +177,11 @@
       showScreen('history'); // 一覧は読み込み済みのものをそのまま表示
       return;
     }
+    if (state.screen === 'wardrobe' && state.wardrobeFrom === 'check') {
+      showScreen('check');
+      window.scrollTo(0, state.checkScrollY); // 見ていた項目の位置に戻す
+      return;
+    }
     if (state.screen === 'judge' && state.judgeFrom === 'check') {
       showScreen('check');
       return;
@@ -176,6 +201,23 @@
       case 'open-history':
         showScreen('history');
         loadHistory();
+        break;
+      case 'open-wardrobe':
+        openWardrobe();
+        break;
+      case 'open-wardrobe-category':
+        selectWardrobeCategory(target.getAttribute('data-folder-id'));
+        break;
+      case 'open-photo':
+        openPhotoViewer(target.getAttribute('data-file-id'));
+        break;
+      case 'open-patterns':
+        showScreen('patterns');
+        loadPatterns();
+        break;
+      case 'select-pattern-group':
+        state.patternGroup = target.getAttribute('data-group');
+        renderPatterns();
         break;
       case 'open-detail':
         showScreen('detail');
@@ -351,6 +393,16 @@
 
     li.appendChild(label);
     li.appendChild(concern);
+
+    // 「手持ちの服を見る」ボタン（Settings の WARDROBE_LINK_ITEM_IDS で指定した項目だけ）
+    if (state.data.hasWardrobe && state.data.wardrobeLinkItemIds.indexOf(item.id) !== -1) {
+      var extra = el('div', { className: 'item-extra' });
+      var link = el('button', { className: 'button button-secondary', text: '手持ちの服を見る' });
+      link.type = 'button';
+      link.setAttribute('data-action', 'open-wardrobe');
+      extra.appendChild(link);
+      li.appendChild(extra);
+    }
     updateItemView(li, state.statuses[item.id]);
     return li;
   }
@@ -967,20 +1019,277 @@
   }
 
   /* ============================================================
+   * マイクローゼット（手持ちの服の写真）
+   *   カテゴリー一覧 → 写真の一覧（名前だけ）→ 縮小画像を 24 枚ずつ読み込み、の順に
+   *   少しずつ読み込むことで、店内の電波でも待たされにくくしています。
+   * ============================================================ */
+
+  function openWardrobe() {
+    if (state.screen === 'check') state.checkScrollY = window.scrollY;
+    state.wardrobeFrom = state.screen === 'check' ? 'check' : 'home';
+    showScreen('wardrobe');
+    if (state.wardrobe.categories) {
+      renderWardrobeTabs();
+      renderWardrobeGrid();
+      return;
+    }
+    loadWardrobe();
+  }
+
+  /** カテゴリー（サブフォルダ）の一覧を読み込みます */
+  function loadWardrobe() {
+    var w = state.wardrobe;
+    var requestId = ++w.requestId;
+    byId('wardrobe-tabs').textContent = '';
+    byId('wardrobe-grid').textContent = '';
+    byId('wardrobe-count').textContent = '';
+    byId('wardrobe-more').hidden = true;
+    setLoadState('wardrobe', '読み込み中…', false);
+
+    google.script.run
+      .withSuccessHandler(function (result) {
+        if (requestId !== w.requestId) return;
+        setLoadState('wardrobe', '', false);
+        w.categories = result.categories;
+        if (w.categories.length === 0) {
+          setLoadState('wardrobe', '写真が見つかりませんでした。\n手持ちの服フォルダの中に、カテゴリーごとのフォルダを作って写真を入れてください。', true);
+          return;
+        }
+        renderWardrobeTabs();
+        selectWardrobeCategory(w.current || w.categories[0].id);
+      })
+      .withFailureHandler(function (error) {
+        if (requestId !== w.requestId) return;
+        setLoadState('wardrobe', 'マイクローゼットを読み込めませんでした。\n' + errorMessage(error), true);
+      })
+      .getWardrobeCategories();
+  }
+
+  function renderWardrobeTabs() {
+    var w = state.wardrobe;
+    var tabs = byId('wardrobe-tabs');
+    tabs.textContent = '';
+    w.categories.forEach(function (category) {
+      var chip = el('button', { className: 'chip', text: category.name });
+      chip.type = 'button';
+      chip.setAttribute('data-action', 'open-wardrobe-category');
+      chip.setAttribute('data-folder-id', category.id);
+      chip.setAttribute('aria-pressed', String(category.id === w.current));
+      tabs.appendChild(chip);
+    });
+  }
+
+  /** カテゴリーを選び、写真の一覧を表示します */
+  function selectWardrobeCategory(folderId) {
+    var w = state.wardrobe;
+    w.current = folderId;
+    w.shown = 0;
+    renderWardrobeTabs();
+    if (w.files[folderId]) {
+      showMorePhotos();
+      return;
+    }
+
+    var requestId = ++w.requestId;
+    byId('wardrobe-grid').textContent = '';
+    byId('wardrobe-count').textContent = '';
+    byId('wardrobe-more').hidden = true;
+    setLoadState('wardrobe', '読み込み中…', false);
+    google.script.run
+      .withSuccessHandler(function (result) {
+        if (requestId !== w.requestId || w.current !== folderId) return;
+        setLoadState('wardrobe', '', false);
+        w.files[folderId] = result.files;
+        showMorePhotos();
+      })
+      .withFailureHandler(function (error) {
+        if (requestId !== w.requestId) return;
+        setLoadState('wardrobe', '写真の一覧を読み込めませんでした。\n' + errorMessage(error), true);
+      })
+      .getWardrobeFiles(folderId);
+  }
+
+  /** 表示中のカテゴリーの写真を、これまで表示した枚数分だけ並べ直します */
+  function renderWardrobeGrid() {
+    var w = state.wardrobe;
+    var files = w.files[w.current] || [];
+    var grid = byId('wardrobe-grid');
+    grid.textContent = '';
+    files.slice(0, w.shown).forEach(function (file) { grid.appendChild(buildPhotoTile(file)); });
+    byId('wardrobe-count').textContent = files.length === 0 ? 'このカテゴリーには写真がありません' : files.length + ' 枚';
+    byId('wardrobe-more').hidden = w.shown >= files.length;
+  }
+
+  /** 次の 24 枚を表示し、縮小画像を読み込みます */
+  function showMorePhotos() {
+    var w = state.wardrobe;
+    var files = w.files[w.current] || [];
+    var start = w.shown;
+    w.shown = Math.min(files.length, w.shown + state.data.wardrobeBatch);
+    renderWardrobeGrid();
+
+    var missing = files.slice(start, w.shown)
+      .map(function (f) { return f.id; })
+      .filter(function (id) { return !(id in w.thumbs); });
+    if (missing.length === 0) return;
+
+    var folderId = w.current;
+    google.script.run
+      .withSuccessHandler(function (thumbs) {
+        Object.keys(thumbs).forEach(function (id) { w.thumbs[id] = thumbs[id]; });
+        if (state.screen === 'wardrobe' && w.current === folderId) renderWardrobeGrid();
+      })
+      .withFailureHandler(function (error) {
+        showToast('写真の読み込みに失敗しました。' + errorMessage(error), true);
+      })
+      .getWardrobeThumbnails(missing);
+  }
+
+  /** 写真 1 枚分のタイルを作ります */
+  function buildPhotoTile(file) {
+    var li = el('li');
+    var button = el('button', { className: 'photo' });
+    button.type = 'button';
+    button.setAttribute('data-action', 'open-photo');
+    button.setAttribute('data-file-id', file.id);
+    button.setAttribute('aria-label', file.name + ' を拡大');
+    var thumb = state.wardrobe.thumbs[file.id];
+    if (thumb) {
+      var img = el('img');
+      img.alt = '';
+      img.src = thumb;
+      button.appendChild(img);
+    } else {
+      // 縮小画像の読み込み中、または作れなかった写真はファイル名を表示
+      button.appendChild(el('span', { className: 'photo-placeholder', text: thumb === null ? file.name : '…' }));
+    }
+    li.appendChild(button);
+    return li;
+  }
+
+  /* ============================================================
+   * 配色パターン
+   * ============================================================ */
+
+  function loadPatterns() {
+    var requestId = ++state.patternsRequestId;
+    if (!state.patterns) setLoadState('patterns', '読み込み中…', false);
+
+    google.script.run
+      .withSuccessHandler(function (result) {
+        if (requestId !== state.patternsRequestId) return;
+        setLoadState('patterns', '', false);
+        (result.warnings || []).forEach(function (w) { console.warn('[ColorPatterns] ' + w); });
+        state.patterns = result;
+        if (state.patternGroup && result.groups.indexOf(state.patternGroup) === -1) state.patternGroup = '';
+        renderPatterns();
+      })
+      .withFailureHandler(function (error) {
+        if (requestId !== state.patternsRequestId) return;
+        if (state.patterns) {
+          showToast('最新の配色パターンを読み込めませんでした', true);
+          return;
+        }
+        setLoadState('patterns', '配色パターンを読み込めませんでした。\n' + errorMessage(error), true);
+      })
+      .getColorPatterns();
+  }
+
+  function renderPatterns() {
+    var data = state.patterns;
+    var tabs = byId('pattern-tabs');
+    var list = byId('pattern-list');
+    tabs.textContent = '';
+    list.textContent = '';
+    if (!data) return;
+    if (data.patterns.length === 0) {
+      list.appendChild(el('p', { className: 'center-message', text: '配色パターンがまだありません。ColorPatterns シートに追加してください。' }));
+      return;
+    }
+
+    [''].concat(data.groups).forEach(function (group) {
+      var chip = el('button', { className: 'chip', text: group === '' ? 'すべて' : group });
+      chip.type = 'button';
+      chip.setAttribute('data-action', 'select-pattern-group');
+      chip.setAttribute('data-group', group);
+      chip.setAttribute('aria-pressed', String(group === state.patternGroup));
+      tabs.appendChild(chip);
+    });
+
+    data.patterns
+      .filter(function (p) { return state.patternGroup === '' || p.group === state.patternGroup; })
+      .forEach(function (pattern) { list.appendChild(buildPatternCard(pattern)); });
+  }
+
+  /** 配色パターン 1 件分のカードを作ります */
+  function buildPatternCard(pattern) {
+    var card = el('article', { className: 'pattern-card' });
+    card.appendChild(el('span', { className: 'pattern-group', text: pattern.group }));
+    card.appendChild(el('h3', { className: 'pattern-name', text: pattern.name }));
+
+    // 色の帯（幅 = 割合）。色コードはサーバーで「#RRGGBB」に検証済み
+    var stripe = el('div', { className: 'pattern-stripe' });
+    stripe.setAttribute('role', 'img');
+    stripe.setAttribute('aria-label', pattern.colors.map(function (c) { return c.name; }).join('・'));
+    pattern.colors.forEach(function (color) {
+      var part = el('span');
+      part.style.backgroundColor = color.hex;
+      part.style.flexGrow = String(color.ratio);
+      part.style.flexBasis = '0';
+      stripe.appendChild(part);
+    });
+    card.appendChild(stripe);
+
+    var names = el('ul', { className: 'pattern-colors' });
+    pattern.colors.forEach(function (color) {
+      var li = el('li');
+      var swatch = el('span', { className: 'swatch' });
+      swatch.style.backgroundColor = color.hex;
+      li.appendChild(swatch);
+      var label = el('span', { className: 'swatch-label' });
+      label.appendChild(el('span', { text: color.name }));
+      label.appendChild(el('span', { className: 'swatch-hex', text: color.hex }));
+      li.appendChild(label);
+      names.appendChild(li);
+    });
+    card.appendChild(names);
+
+    if (pattern.memo) card.appendChild(el('p', { className: 'pattern-memo', text: pattern.memo }));
+    return card;
+  }
+
+  /* ============================================================
    * NG例の見本ビューアー
    *   画像は 1 枚（左半分：古着の状態／右半分：試着）。
    *   スマホでは今のチェック画面に合う半分を画面幅に合わせて表示し、
    *   横スクロールでもう半分、「拡大」で文字を読める大きさにできます。
    * ============================================================ */
 
-  function openViewer() {
+  /**
+   * ビューアーを開きます（NG例の見本・手持ちの服の写真で共通）。
+   * @param {string} kind 'guide' | 'photo'
+   */
+  function openViewerShell(kind, title, alt) {
+    var viewer = byId('image-viewer');
     viewerReturnFocus = document.activeElement;
-    byId('image-viewer').classList.remove('is-zoomed');
+    state.viewerKind = kind;
+    viewer.classList.remove('is-zoomed');
+    viewer.classList.toggle('is-photo', kind === 'photo');
+    byId('viewer-title').textContent = title;
+    byId('viewer-hint').hidden = (kind === 'photo');
+    byId('viewer-image').alt = alt;
+    byId('viewer-image').hidden = true;
+    byId('viewer-image').removeAttribute('src');
+    byId('viewer-message').textContent = '';
     byId('viewer-zoom').setAttribute('aria-pressed', 'false');
     byId('viewer-zoom').textContent = '拡大';
-    byId('image-viewer').hidden = false;
+    viewer.hidden = false;
     document.body.classList.add('is-viewer-open');
     byId('viewer-close').focus();
+  }
+
+  function openViewer() {
+    openViewerShell('guide', 'NG例の見本', '古着の状態と試着のフィット感のNG例をまとめた見本画像');
 
     if (state.guideImage) {
       showViewerImage();
@@ -1000,10 +1309,11 @@
       .withSuccessHandler(function (dataUrl) {
         state.guideImageLoading = false;
         state.guideImage = dataUrl;
-        if (!byId('image-viewer').hidden) showViewerImage();
+        if (!byId('image-viewer').hidden && state.viewerKind === 'guide') showViewerImage();
       })
       .withFailureHandler(function (error) {
         state.guideImageLoading = false;
+        if (state.viewerKind !== 'guide') return;
         byId('viewer-message').textContent =
           '画像を読み込めませんでした。\n' + errorMessage(error) + '\n\n閉じてから、もう一度お試しください。';
       })
@@ -1045,7 +1355,40 @@
     box.scrollTop = centerY * box.scrollHeight - box.clientHeight / 2;
   }
 
+  /** 手持ちの服の写真を大きく表示します（まず小さな画像を出し、大きな画像が届いたら差し替え） */
+  function openPhotoViewer(fileId) {
+    openViewerShell('photo', '手持ちの服', '手持ちの服の写真');
+    state.viewerPhotoId = fileId;
+    var img = byId('viewer-image');
+    var thumb = state.wardrobe.thumbs[fileId];
+    if (thumb) {
+      img.src = thumb;
+      img.hidden = false;
+    } else {
+      byId('viewer-message').textContent = '写真を読み込み中…';
+    }
+
+    google.script.run
+      .withSuccessHandler(function (dataUrl) {
+        if (state.viewerKind !== 'photo' || state.viewerPhotoId !== fileId) return; // 別の写真に切り替わっていたら無視
+        byId('viewer-message').textContent = '';
+        img.src = dataUrl;
+        img.hidden = false;
+      })
+      .withFailureHandler(function (error) {
+        if (state.viewerKind !== 'photo' || state.viewerPhotoId !== fileId) return;
+        if (!thumb) {
+          byId('viewer-message').textContent = '写真を読み込めませんでした。\n' + errorMessage(error);
+        } else {
+          showToast('大きな写真を読み込めなかったため、小さな写真を表示しています', true);
+        }
+      })
+      .getWardrobeImage(fileId);
+  }
+
   function closeViewer() {
+    state.viewerKind = null;
+    state.viewerPhotoId = null;
     byId('image-viewer').hidden = true;
     document.body.classList.remove('is-viewer-open');
     if (viewerReturnFocus && viewerReturnFocus.focus) viewerReturnFocus.focus();

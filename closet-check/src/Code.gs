@@ -47,7 +47,27 @@ const CONFIG = {
     SETTINGS: {
       name: 'Settings',
       headers: ['key', 'value', 'description']
+    },
+    PATTERNS: {
+      name: 'ColorPatterns',
+      headers: [
+        'pattern_id', 'group', 'pattern_name',
+        'color1_name', 'color1_hex', 'color2_name', 'color2_hex',
+        'color3_name', 'color3_hex', 'color4_name', 'color4_hex',
+        'ratio', 'memo', 'active', 'display_order'
+      ]
     }
+  },
+
+  // 1 つの配色パターンに登録できる色の数（ColorPatterns の color1〜color4）
+  MAX_PATTERN_COLORS: 4,
+
+  // マイクローゼット（手持ちの服の写真）
+  WARDROBE: {
+    THUMB_BATCH: 24,              // 一度に読み込む縮小画像の枚数
+    THUMB_CACHE_SECONDS: 21600,   // 縮小画像をキャッシュする時間（6 時間）
+    FULL_IMAGE_SIZE: 1200,        // 拡大表示するときの画像の長辺（px）
+    UNSORTED_LABEL: '未分類'      // フォルダ直下に置いた写真のタブ名
   },
 
   // Checklist シートで使える値
@@ -170,7 +190,9 @@ const DEFAULT_SETTINGS = [
   ['MIN_PROGRESS_FOR_BUY', 0.8, '「買い」と判定するのに必要な最低進捗率（0〜1）'],
   ['PRICE_MAX', 10000000, '入力できる価格の上限（円）'],
   ['HISTORY_LIMIT', 100, '購入履歴に表示する最大件数'],
-  ['GUIDE_IMAGE_FILE_ID', '', 'NG例の見本画像（Googleドライブ）のファイル ID または共有 URL。空なら表示しない']
+  ['GUIDE_IMAGE_FILE_ID', '', 'NG例の見本画像（Googleドライブ）のファイル ID または共有 URL。空なら表示しない'],
+  ['WARDROBE_FOLDER_ID', '', '手持ちの服の写真フォルダ（Googleドライブ）の ID または URL。中のサブフォルダがカテゴリーになる'],
+  ['WARDROBE_LINK_ITEM_IDS', 'F20', '「手持ちの服を見る」ボタンを付けるチェック項目の item_id（カンマ区切り）']
 ];
 
 
@@ -198,6 +220,7 @@ function setupSpreadsheet() {
 
     messages.push(seedChecklist_(ss));
     messages.push(seedSettings_(ss));
+    messages.push(seedColorPatterns_(ss));
 
     applySheetFormats_(ss);
     removeEmptyDefaultSheet_(ss);
@@ -209,6 +232,21 @@ function setupSpreadsheet() {
   Logger.log(summary);
   showAlertIfPossible_(summary);
   return summary;
+}
+
+/**
+ * スプレッドシートを編集したときに自動で動きます（シンプルトリガー）。
+ * ColorPatterns シートの hex 列に色コードを入力すると、そのセルをその色で塗ります。
+ */
+function onEdit(e) {
+  try {
+    if (!e || !e.range) return;
+    const sheet = e.range.getSheet();
+    if (sheet.getName() !== CONFIG.SHEETS.PATTERNS.name) return;
+    paintHexCells_(sheet, e.range);
+  } catch (err) {
+    // 色付けに失敗しても、編集そのものには影響させない
+  }
 }
 
 /**
@@ -298,6 +336,16 @@ function applySheetFormats_(ss) {
   const settings = ss.getSheetByName(CONFIG.SHEETS.SETTINGS.name);
   settings.setColumnWidth(2, 360);
   settings.setColumnWidth(3, 380);
+
+  // ---- ColorPatterns ----
+  const patterns = ss.getSheetByName(CONFIG.SHEETS.PATTERNS.name);
+  const ph = CONFIG.SHEETS.PATTERNS.headers;
+  patterns.getRange(2, ph.indexOf('active') + 1, maxRows, 1).setDataValidation(
+    SpreadsheetApp.newDataValidation().requireCheckbox().build()
+  );
+  patterns.setColumnWidth(ph.indexOf('pattern_name') + 1, 200);
+  patterns.setColumnWidth(ph.indexOf('memo') + 1, 320);
+  paintHexCells_(patterns, null); // hex 列のセルをその色で塗る
 }
 
 /**
@@ -448,6 +496,9 @@ function getInitialData() {
     items: checklist.items,
     warnings: checklist.warnings,
     hasGuideImage: settings.GUIDE_IMAGE_FILE_ID !== '',
+    hasWardrobe: settings.WARDROBE_FOLDER_ID !== '',
+    wardrobeLinkItemIds: settings.WARDROBE_LINK_ITEM_IDS,
+    wardrobeBatch: CONFIG.WARDROBE.THUMB_BATCH,
     conditionTypes: CONFIG.CONDITION_TYPES,
     judgments: CONFIG.JUDGMENTS,
     limits: CONFIG.LIMITS
@@ -683,12 +734,14 @@ function getGuideImage() {
 /**
  * ファイル ID または共有 URL から、ドライブのファイル ID だけを取り出します。
  *   例）https://drive.google.com/file/d/【ID】/view?usp=sharing → 【ID】
+ *       https://drive.google.com/drive/folders/【ID】          → 【ID】（フォルダ）
  *       https://drive.google.com/open?id=【ID】               → 【ID】
  * @return {string} ID（取り出せなければ空文字）
  */
 function extractDriveFileId_(value) {
   const text = String(value || '').trim();
-  const match = text.match(/\/d\/([\w-]{20,})/) || text.match(/[?&]id=([\w-]{20,})/) || text.match(/^([\w-]{20,})$/);
+  const match = text.match(/\/d\/([\w-]{20,})/) || text.match(/\/folders\/([\w-]{20,})/) ||
+    text.match(/[?&]id=([\w-]{20,})/) || text.match(/^([\w-]{20,})$/);
   return match ? match[1] : '';
 }
 
@@ -733,6 +786,10 @@ function readSettings_() {
 
   settings.APP_NAME = String(settings.APP_NAME).trim() || defaultSetting_('APP_NAME');
   settings.GUIDE_IMAGE_FILE_ID = String(settings.GUIDE_IMAGE_FILE_ID || '').trim();
+  settings.WARDROBE_FOLDER_ID = String(settings.WARDROBE_FOLDER_ID || '').trim();
+  settings.WARDROBE_LINK_ITEM_IDS = String(settings.WARDROBE_LINK_ITEM_IDS || '').split(/[,、，\s]+/)
+    .map(function (id) { return id.trim(); })
+    .filter(function (id) { return id !== ''; });
   return settings;
 }
 
@@ -1098,4 +1155,327 @@ function findHistoryRow_(sheet, recordId) {
 function formatDate_(value) {
   if (!(value instanceof Date)) return String(value || '');
   return Utilities.formatDate(value, CONFIG.TIMEZONE, 'yyyy/MM/dd HH:mm');
+}
+
+
+/* ============================================================
+ * 10. 配色パターン（ColorPatterns シート）
+ * ============================================================ */
+
+/**
+ * 配色パターンの初期データ
+ *   [pattern_id, group, pattern_name,
+ *    color1_name, color1_hex, color2_name, color2_hex, color3_name, color3_hex, color4_name, color4_hex,
+ *    ratio, memo, active, display_order]
+ *   ratio は「6:3:1」のように色の割合（面積の目安）。空なら均等に表示します。
+ */
+const DEFAULT_COLOR_PATTERNS = [
+  ['P01', 'ネイビー', 'ネイビー × グレー × 白', 'ネイビー', '#1F2A44', 'グレー', '#8E9196', 'ホワイト', '#F4F4F0', '', '', '5:3:2', '紺ブレザー × グレースラックス × 白シャツ。迷ったらこれという王道のトラッド', true, 10],
+  ['P02', 'ネイビー', 'ネイビー × ベージュ', 'ネイビー', '#1F2A44', 'ベージュ', '#CDB991', 'ホワイト', '#F4F4F0', '', '', '5:4:1', '紺ジャケット × チノパン。きれいめにもカジュアルにも寄せやすい', true, 20],
+  ['P03', 'ブラウン', 'ブラウン × クリーム × オリーブ', 'ダークブラウン', '#4A3015', 'クリーム', '#E8DFB0', 'オリーブ', '#6B6B3A', '', '', '5:3:2', 'ブラウンのジャケットに生成りのシャツ、オリーブのパンツ。秋冬の温かみのある配色', true, 30],
+  ['P04', 'ブラウン', 'ブラウンのグラデーション', 'ダークブラウン', '#4A3015', 'トープ', '#8B7058', 'クリーム', '#E8DFB0', '', '', '4:4:2', '同系色の濃淡でまとめる上級者風。素材感（ツイード・コーデュロイ）で変化をつける', true, 40],
+  ['P05', 'ブラウン', 'キャメル × ネイビー', 'キャメル', '#A9773F', 'ネイビー', '#1F2A44', 'ホワイト', '#F4F4F0', '', '', '4:4:2', 'キャメルのコートやニットにネイビーを合わせる、ブリティッシュの定番', true, 50],
+  ['P06', 'ワイン', 'バーガンディ × オリーブ', 'バーガンディ', '#5A1E2A', 'カーキ', '#8A7A45', 'セージ', '#9AA06E', '', '', '4:4:2', 'ワイン色のニットにカーキのパンツ。くすんだ色同士で落ち着いた印象', true, 60],
+  ['P07', 'ワイン', 'バーガンディ × グレー', 'バーガンディ', '#5A1E2A', 'チャコール', '#3D3F43', 'ライトグレー', '#B9BBBE', '', '', '3:5:2', 'グレーの装いにワイン色を差し色に。ネクタイやソックスで取り入れても', true, 70],
+  ['P08', 'グレー', 'グレーのワントーン', 'チャコール', '#3D3F43', 'ミディアムグレー', '#7D8085', 'ライトグレー', '#C9CBCE', '', '', '4:4:2', '濃淡の違うグレーだけでまとめる。シンプルで品のある大人の配色', true, 80],
+  ['P09', 'グリーン', 'オリーブ × ベージュ × 白', 'オリーブ', '#5C5E33', 'ベージュ', '#CDB991', 'オフホワイト', '#EFEBE0', '', '', '4:4:2', 'ミリタリー系のアイテムを上品にまとめる配色', true, 90],
+  ['P10', 'モノトーン', 'ブラック × ホワイト × グレー', 'ブラック', '#1C1C1E', 'ホワイト', '#F4F4F0', 'グレー', '#8E9196', '', '', '5:3:2', '失敗しないモノトーン。小物の素材で表情をつける', true, 100]
+];
+
+/**
+ * ColorPatterns シートが空なら、初期の配色パターンを書き込みます。
+ * @return {string} 結果メッセージ
+ */
+function seedColorPatterns_(ss) {
+  const sheet = ss.getSheetByName(CONFIG.SHEETS.PATTERNS.name);
+  if (sheet.getLastRow() > 1) {
+    return 'ColorPatterns には既にデータがあるため、初期パターンの書き込みをスキップしました';
+  }
+  sheet.getRange(2, 1, DEFAULT_COLOR_PATTERNS.length, DEFAULT_COLOR_PATTERNS[0].length)
+    .setValues(DEFAULT_COLOR_PATTERNS);
+  return 'ColorPatterns に配色パターンを ' + DEFAULT_COLOR_PATTERNS.length + ' 件書き込みました';
+}
+
+/**
+ * 配色パターンを返します（画面の「配色パターン」を開いたときに呼ぶ）。
+ * 入力ミスのある色は読み飛ばし、warnings に理由を入れます。
+ *
+ * @return {{groups: string[], patterns: Object[], warnings: string[]}}
+ */
+function getColorPatterns() {
+  ensureSheets_();
+  const def = CONFIG.SHEETS.PATTERNS;
+  const sheet = getSpreadsheet_().getSheetByName(def.name);
+  const lastRow = sheet.getLastRow();
+  const patterns = [];
+  const groups = [];
+  const warnings = [];
+  if (lastRow < 2) return { groups: groups, patterns: patterns, warnings: warnings };
+
+  const col = indexMap_(def.headers);
+  sheet.getRange(2, 1, lastRow - 1, def.headers.length).getValues().forEach(function (row, i) {
+    const rowNo = i + 2;
+    const name = String(row[col.pattern_name]).trim();
+    if (name === '' || !isActive_(row[col.active])) return;
+
+    const colors = [];
+    for (let n = 1; n <= CONFIG.MAX_PATTERN_COLORS; n++) {
+      const rawHex = String(row[col['color' + n + '_hex']]).trim();
+      if (rawHex === '') continue;
+      const hex = normalizeHex_(rawHex);
+      if (!hex) {
+        warnings.push(rowNo + '行目：color' + n + '_hex「' + rawHex + '」は色コードではありません（例：#1F2A44）');
+        continue;
+      }
+      colors.push({ name: String(row[col['color' + n + '_name']]).trim() || hex, hex: hex });
+    }
+    if (colors.length === 0) {
+      warnings.push(rowNo + '行目：色が 1 つも登録されていないため表示しません');
+      return;
+    }
+
+    // 割合「6:3:1」→ 各色に割り当て（数が合わない・不正なら均等）
+    const ratios = String(row[col.ratio]).split(/[:：\/,、]/).map(function (v) { return Number(v.trim()); });
+    const ratioOk = ratios.length === colors.length && ratios.every(function (n) { return isFinite(n) && n > 0; });
+    colors.forEach(function (c, k) { c.ratio = ratioOk ? ratios[k] : 1; });
+
+    const group = String(row[col.group]).trim() || 'その他';
+    if (groups.indexOf(group) === -1) groups.push(group);
+    const order = Number(row[col.display_order]);
+    patterns.push({
+      id: String(row[col.pattern_id]).trim() || ('row' + rowNo),
+      group: group,
+      name: name,
+      colors: colors,
+      memo: String(row[col.memo]).trim(),
+      order: isFinite(order) && row[col.display_order] !== '' ? order : 999999
+    });
+  });
+
+  patterns.sort(function (a, b) { return a.order - b.order; });
+  // グループの並びも、各グループで最初に出てくるパターンの表示順に合わせる
+  const firstOrder = {};
+  patterns.forEach(function (p) { if (!(p.group in firstOrder)) firstOrder[p.group] = p.order; });
+  groups.sort(function (a, b) { return firstOrder[a] - firstOrder[b]; });
+  return { groups: groups, patterns: patterns, warnings: warnings };
+}
+
+/**
+ * ColorPatterns シートの hex 列のセルを、その色で塗ります（文字色は読みやすい白か黒）。
+ * @param {Range=} range 指定すると、その範囲に含まれる hex セルだけを塗る（null なら全体）
+ */
+function paintHexCells_(sheet, range) {
+  const headers = CONFIG.SHEETS.PATTERNS.headers;
+  const firstRow = Math.max(2, range ? range.getRow() : 2);
+  const lastRow = range ? range.getLastRow() : sheet.getLastRow();
+  if (lastRow < firstRow) return;
+
+  headers.forEach(function (header, i) {
+    if (!/_hex$/.test(header)) return;
+    const column = i + 1;
+    if (range && (column < range.getColumn() || column > range.getLastColumn())) return;
+
+    const cells = sheet.getRange(firstRow, column, lastRow - firstRow + 1, 1);
+    const values = cells.getValues();
+    cells.setBackgrounds(values.map(function (r) { return [normalizeHex_(r[0]) || '#FFFFFF']; }));
+    cells.setFontColors(values.map(function (r) {
+      const hex = normalizeHex_(r[0]);
+      return [hex ? readableTextColor_(hex) : '#000000'];
+    }));
+  });
+}
+
+/**
+ * 色コードを「#RRGGBB」の形にそろえます（不正なら空文字）。
+ *   例）1f2a44 → #1F2A44 ／ #abc → #AABBCC
+ */
+function normalizeHex_(value) {
+  const match = String(value == null ? '' : value).trim().match(/^#?([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/);
+  if (!match) return '';
+  let hex = match[1].toUpperCase();
+  if (hex.length === 3) hex = hex.replace(/(.)/g, '$1$1');
+  return '#' + hex;
+}
+
+/** 背景色に対して読みやすい文字色（白か黒）を返します */
+function readableTextColor_(hex) {
+  const r = parseInt(hex.substr(1, 2), 16);
+  const g = parseInt(hex.substr(3, 2), 16);
+  const b = parseInt(hex.substr(5, 2), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.6 ? '#000000' : '#FFFFFF';
+}
+
+
+/* ============================================================
+ * 11. マイクローゼット（手持ちの服の写真）
+ *   Googleドライブのフォルダ構成
+ *     手持ちの服フォルダ（Settings の WARDROBE_FOLDER_ID）
+ *       ├ トップス/   ← サブフォルダ名がアプリのタブ名になる
+ *       ├ パンツ/
+ *       └ ...
+ *   安全のため、このフォルダとその直下のサブフォルダにある画像しか読み込みません。
+ * ============================================================ */
+
+/**
+ * カテゴリー（サブフォルダ）の一覧を返します。
+ * @return {{categories: {id: string, name: string}[]}}
+ */
+function getWardrobeCategories() {
+  const root = getWardrobeRoot_();
+  const categories = [];
+  const folders = root.getFolders();
+  while (folders.hasNext()) {
+    const folder = folders.next();
+    categories.push({ id: folder.getId(), name: folder.getName() });
+  }
+  categories.sort(function (a, b) { return a.name.localeCompare(b.name, 'ja'); });
+
+  // フォルダ直下にも写真があれば「未分類」タブを最後に追加
+  if (listImageFiles_(root).length > 0) {
+    categories.push({ id: root.getId(), name: CONFIG.WARDROBE.UNSORTED_LABEL });
+  }
+  return { categories: categories };
+}
+
+/**
+ * カテゴリー内の写真の一覧（新しい順）を返します。画像そのものは含みません。
+ * @param {string} folderId
+ * @return {{files: {id: string, name: string}[]}}
+ */
+function getWardrobeFiles(folderId) {
+  const root = getWardrobeRoot_();
+  const allowed = wardrobeFolderIds_(root);
+  const id = String(folderId || '');
+  if (!allowed[id]) throw new Error('このフォルダは表示できません。画面を再読み込みしてください。');
+  const folder = id === root.getId() ? root : DriveApp.getFolderById(id);
+  return { files: listImageFiles_(folder) };
+}
+
+/**
+ * 写真の縮小画像（一覧表示用）をまとめて返します。
+ * @param {string[]} fileIds 最大 CONFIG.WARDROBE.THUMB_BATCH 件
+ * @return {Object} { fileId: 'data:image/...' | null }
+ */
+function getWardrobeThumbnails(fileIds) {
+  if (!Array.isArray(fileIds)) throw new Error('写真の指定が不正です。');
+  const ids = fileIds.slice(0, CONFIG.WARDROBE.THUMB_BATCH).map(String);
+  const allowed = wardrobeFolderIds_(getWardrobeRoot_());
+  const cache = CacheService.getScriptCache();
+  const cached = cache.getAll(ids.map(function (id) { return 'thumb_' + id; }));
+  const result = {};
+
+  ids.forEach(function (id) {
+    if (cached['thumb_' + id]) {
+      result[id] = cached['thumb_' + id];
+      return;
+    }
+    result[id] = null;
+    try {
+      const file = getWardrobeFile_(id, allowed);
+      const thumb = file.getThumbnail(); // ドライブが作る小さな画像（無い場合は null）
+      if (!thumb) return;
+      const dataUrl = 'data:' + (thumb.getContentType() || 'image/png') + ';base64,' +
+        Utilities.base64Encode(thumb.getBytes());
+      result[id] = dataUrl;
+      if (dataUrl.length < 90000) cache.put('thumb_' + id, dataUrl, CONFIG.WARDROBE.THUMB_CACHE_SECONDS);
+    } catch (e) {
+      // 1 枚読めなくても他の写真は表示する
+    }
+  });
+  return result;
+}
+
+/**
+ * 写真 1 枚を拡大表示用の大きさで返します。
+ *   1. ドライブの縮小画像サービスで長辺 FULL_IMAGE_SIZE px にしたもの（速い）
+ *   2. 1 が使えなければ元の画像（5MB 以下で、ブラウザで表示できる形式のとき）
+ *   3. それも無理なら一覧用の小さな画像
+ * @param {string} fileId
+ * @return {string} data URL
+ */
+function getWardrobeImage(fileId) {
+  const file = getWardrobeFile_(String(fileId || ''), wardrobeFolderIds_(getWardrobeRoot_()));
+
+  try {
+    const meta = UrlFetchApp.fetch(
+      'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(file.getId()) + '?fields=thumbnailLink',
+      { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true }
+    );
+    const link = meta.getResponseCode() === 200 ? JSON.parse(meta.getContentText()).thumbnailLink : '';
+    if (link) {
+      const image = UrlFetchApp.fetch(link.replace(/=s\d+$/, '=s' + CONFIG.WARDROBE.FULL_IMAGE_SIZE), {
+        headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true
+      });
+      if (image.getResponseCode() === 200) {
+        const blob = image.getBlob();
+        return 'data:' + (blob.getContentType() || 'image/jpeg') + ';base64,' + Utilities.base64Encode(blob.getBytes());
+      }
+    }
+  } catch (e) {
+    // 1 が使えない場合は 2 へ
+  }
+
+  const browserTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+  if (browserTypes.indexOf(file.getMimeType()) !== -1 && file.getSize() <= CONFIG.GUIDE_IMAGE_MAX_BYTES) {
+    const blob = file.getBlob();
+    return 'data:' + file.getMimeType() + ';base64,' + Utilities.base64Encode(blob.getBytes());
+  }
+
+  const thumb = file.getThumbnail();
+  if (thumb) {
+    return 'data:' + (thumb.getContentType() || 'image/png') + ';base64,' + Utilities.base64Encode(thumb.getBytes());
+  }
+  throw new Error('この写真は表示できませんでした（形式：' + file.getMimeType() + '）。JPEG か PNG で保存し直してください。');
+}
+
+/** 手持ちの服フォルダを取得します */
+function getWardrobeRoot_() {
+  const folderId = extractDriveFileId_(readSettings_().WARDROBE_FOLDER_ID);
+  if (!folderId) {
+    throw new Error('Settings シートの WARDROBE_FOLDER_ID に、手持ちの服フォルダの URL を設定してください。');
+  }
+  try {
+    return DriveApp.getFolderById(folderId);
+  } catch (e) {
+    throw new Error('手持ちの服フォルダが見つかりません。WARDROBE_FOLDER_ID の URL が正しいか確認してください。');
+  }
+}
+
+/** 読み込みを許可するフォルダ ID の一覧（手持ちの服フォルダとその直下のサブフォルダ） */
+function wardrobeFolderIds_(root) {
+  const ids = {};
+  ids[root.getId()] = true;
+  const folders = root.getFolders();
+  while (folders.hasNext()) ids[folders.next().getId()] = true;
+  return ids;
+}
+
+/** 写真を取得します。許可されたフォルダの外にあるファイルはエラーにします */
+function getWardrobeFile_(fileId, allowedFolderIds) {
+  if (!/^[\w-]{20,}$/.test(fileId)) throw new Error('写真の指定が不正です。');
+  let file;
+  try {
+    file = DriveApp.getFileById(fileId);
+  } catch (e) {
+    throw new Error('写真が見つかりません。削除された可能性があります。');
+  }
+  const parents = file.getParents();
+  while (parents.hasNext()) {
+    if (allowedFolderIds[parents.next().getId()]) return file;
+  }
+  throw new Error('この写真は表示できません。');
+}
+
+/** フォルダ内の画像ファイルを新しい順に返します */
+function listImageFiles_(folder) {
+  const files = [];
+  const iterator = folder.getFiles();
+  while (iterator.hasNext()) {
+    const file = iterator.next();
+    if (String(file.getMimeType()).indexOf('image/') !== 0) continue;
+    files.push({ id: file.getId(), name: file.getName(), time: file.getDateCreated().getTime() });
+  }
+  files.sort(function (a, b) { return b.time - a.time; });
+  return files.map(function (f) { return { id: f.id, name: f.name }; });
 }
